@@ -1,6 +1,7 @@
 package datapool;
 
 import io.gatling.javaapi.core.ChainBuilder;
+import io.gatling.javaapi.http.HttpRequestActionBuilder;
 import io.gatling.javaapi.core.OpenInjectionStep;
 import io.gatling.javaapi.core.PopulationBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
@@ -15,6 +16,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.http;
+import static io.gatling.javaapi.http.HttpDsl.StringBodyPart;
 import static io.gatling.javaapi.http.HttpDsl.status;
 
 /**
@@ -99,6 +101,63 @@ public class DatapoolSimulation extends Simulation {
                             .check(substring("#{skey}"))
                             .check(bodyString().transform(b -> Diag.classify("p5", b)).exists())));
 
+
+    // ---- «человеческие» ручки и MCP: редкие (по умолчанию 2 раза в минуту каждая), на служебных пулах h1..h7 ----
+
+    static String rpc(String method, String params) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\"" + (params == null ? "" : ",\"params\":" + params) + "}";
+    }
+
+    static HttpRequestActionBuilder mcp(String name, String body) {
+        return http("mcp " + name).post("/mcp").header("Content-Type", "application/json").body(StringBody(body)).check(status().is(200));
+    }
+
+    /** Вызов тулы MCP: ответ 200 и result.isError == false (rate limited / busy — это провал). */
+    static HttpRequestActionBuilder tool(String tool, String args) {
+        return mcp(tool, rpc("tools/call", "{\"name\":\"" + tool + "\",\"arguments\":" + args + "}"))
+                .check(jsonPath("$.result.isError").ofBoolean().is(false));
+    }
+
+    static final List<ScenarioBuilder> REST_HUMAN = List.of(
+            scenario("human pools list").exec(http("human GET pools").get("/api/v1/pools").check(status().is(200)).check(jsonPath("$[0].pool").exists())),
+            scenario("human pools page").exec(http("human GET pools.html").get("/pools.html").check(status().is(200)).check(substring("drop-pool"))),
+            scenario("human statistics api").exec(http("human GET statistics").get("/api/v1/statistics?minutes=60").check(status().is(200)).check(jsonPath("$.timestamps").exists())),
+            scenario("human statistics page").exec(http("human GET statistics.html").get("/statistics.html").check(status().is(200)).check(substring("api/v1/statistics"))),
+            scenario("human metrics").exec(http("human GET metrics").get("/metrics").check(status().is(200))),
+            scenario("human repair h1").exec(http("human POST pools/repair").post("/api/v1/pools/repair?env=load&pool=h1").check(status().is(200)).check(jsonPath("$.ok").ofBoolean().is(true))),
+            scenario("human repair-batch").exec(http("human POST pools/repair-batch").post("/api/v1/pools/repair-batch").header("Content-Type", "application/json")
+                    .body(StringBody("[\"LOAD.H1\",\"LOAD.H2\"]")).check(status().is(200)).check(jsonPath("$[1].ok").ofBoolean().is(true))),
+            scenario("human resetseq h1").exec(http("human GET resetseq").get("/api/v1/resetseq?env=load&pool=h1").check(status().is(200))),
+            scenario("human unlock h1").exec(http("human POST unlock").post("/api/v1/unlock?env=load&pool=h1&unlock-all=true").check(status().is(200))),
+            scenario("human download h2").exec(http("human GET download/csv").get("/api/v1/download/csv?env=load&pool=h2&delimiter=;").check(status().is(200)).check(substring("login"))),
+            scenario("human upload h7").exec(http("human POST upload-csv").post("/api/v1/upload-csv-as-json?env=load&pool=h7&override=true&delimiter=;")
+                    .bodyPart(StringBodyPart("file", "a;b\n1;2\n3;4\n").fileName("x.csv")).check(status().is(200))),
+            scenario("human put+drop h3").exec(http("human put h3").post("/api/v1/put-value?env=load&pool=h3").header("Content-Type", "text/plain").body(StringBody("{\"a\":\"1\"}")).check(status().is(200)))
+                    .exec(http("human DELETE drop-pool").delete("/api/v1/drop-pool?env=load&pool=h3").check(status().is(200))));
+
+    static final List<ScenarioBuilder> MCP_AI = List.of(
+            scenario("ai session").exec(mcp("initialize", rpc("initialize", "{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"gatling\",\"version\":\"1\"}}"))
+                            .check(jsonPath("$.result.serverInfo.name").is("datapool")))
+                    .exec(mcp("tools/list", rpc("tools/list", null)).check(jsonPath("$.result.tools[*].name").findAll().transform(l -> l.size()).is(10)))
+                    .exec(tool("about", "{}")),
+            scenario("ai list_pools").exec(tool("list_pools", "{}")),
+            scenario("ai counters_stats").exec(tool("counters_stats", "{}")),
+            scenario("ai repair_pools").exec(tool("repair_pools", "{\"pools\":[\"LOAD.H1\"]}")),
+            scenario("ai reset_sequence").exec(tool("reset_sequence", "{\"env\":\"load\",\"pool\":\"h1\"}")),
+            scenario("ai unlock").exec(tool("unlock", "{\"env\":\"load\",\"pool\":\"h1\",\"rid\":1}")),
+            scenario("ai put_value").exec(tool("put_value", "{\"env\":\"load\",\"pool\":\"h4\",\"value\":\"{\\\"a\\\":\\\"1\\\"}\"}")),
+            scenario("ai upload_csv").exec(tool("upload_csv", "{\"env\":\"load\",\"pool\":\"h5\",\"csv\":\"login,x\\nu1,1\\nu2,2\\n\",\"override\":true}")),
+            scenario("ai download_pool_csv").exec(tool("download_pool_csv", "{\"env\":\"load\",\"pool\":\"h5\"}")),
+            scenario("ai put+drop h6").exec(http("ai put h6").post("/api/v1/put-value?env=load&pool=h6").header("Content-Type", "text/plain").body(StringBody("{\"a\":\"1\"}")).check(status().is(200)))
+                    .exec(tool("drop_pool", "{\"env\":\"load\",\"pool\":\"h6\",\"confirm\":\"LOAD.H6\"}")));
+
+    /** Редкая ручка: perMin запросов в минуту на всё время теста; offset разносит ручки по времени, чтобы тяжёлые не совпадали. */
+    private static PopulationBuilder rare(ScenarioBuilder sc, double perMin, int index) {
+        int total = WARM_SEC + STEPS * (LEVEL_SEC + RAMP_SEC);
+        return sc.injectOpen(nothingFor(Duration.ofSeconds(WARM_SEC / 2 + (index * 7L) % 30)),
+                constantUsersPerSec(perMin / 60.0).during(Duration.ofSeconds(total)));
+    }
+
     private OpenInjectionStep[] profile(double w) {
         return new OpenInjectionStep[]{
                 rampUsersPerSec(0).to(w * RPS).during(WARM_SEC),
@@ -115,6 +174,8 @@ public class DatapoolSimulation extends Simulation {
                 PUT.injectOpen(profile(0.15)),
                 scenario("get p5").exec(read("p5")).injectOpen(profile(0.15))));
         if (SEARCH_W > 0) pops.add(SEARCH.injectOpen(profile(SEARCH_W)));
+        if (Cfg.HUMAN_PER_MIN > 0) for (int i = 0; i < REST_HUMAN.size(); i++) pops.add(rare(REST_HUMAN.get(i), Cfg.HUMAN_PER_MIN, i));
+        if (Cfg.AI_PER_MIN > 0) for (int i = 0; i < MCP_AI.size(); i++) pops.add(rare(MCP_AI.get(i), Cfg.AI_PER_MIN, i + REST_HUMAN.size()));
         if (POISON_RPS > 0) pops.add(POISON.injectOpen(rampUsersPerSec(0).to(POISON_RPS).during(WARM_SEC),
                 constantUsersPerSec(POISON_RPS).during(STEPS * (LEVEL_SEC + RAMP_SEC))));
         setUp(pops).protocols(protocol).assertions(global().failedRequests().percent().lte(1.0));
@@ -123,7 +184,7 @@ public class DatapoolSimulation extends Simulation {
     @Override
     public void before() {
         Diag.info("params: rps=" + RPS + " step=" + STEP + " steps=" + STEPS + " levelSec=" + LEVEL_SEC + " rampSec=" + RAMP_SEC
-                + " poisonRps=" + POISON_RPS + " searchW=" + SEARCH_W + " preLockPct=" + PRELOCK_PCT + " longPct=" + LONG_PCT + " holdMs=" + HOLD_MS);
+                + " humanPerMin=" + Cfg.HUMAN_PER_MIN + " aiPerMin=" + Cfg.AI_PER_MIN + " poisonRps=" + POISON_RPS + " searchW=" + SEARCH_W + " preLockPct=" + PRELOCK_PCT + " longPct=" + LONG_PCT + " holdMs=" + HOLD_MS);
         Api.prepare(PRELOCK_PCT);
     }
 
@@ -131,7 +192,7 @@ public class DatapoolSimulation extends Simulation {
     public void after() {
         // пользователи уже закончили. Проверяем, что после нагрузки каждый пул обходится полным кругом
         List<Api.Audit> audits = new ArrayList<>();
-        for (String p : Cfg.READ_POOLS) audits.add(Api.cycle(p, Cfg.POOL_SIZE, java.util.Set.of(), Cfg.POOL_SIZE + 200));
+        for (String p : Cfg.READ_POOLS) audits.add(Api.cycle(p, Cfg.POOL_SIZE, Diag.prelocked(p), Cfg.POOL_SIZE + 200));
         audits.add(Api.cycle(Cfg.LOCK_POOL, Cfg.POOL_SIZE, Diag.heldSet(), Cfg.POOL_SIZE + 200));
         // p5: после нагрузки один клиент обходит пул; дыра в rid (упавшая вставка) превращает чтение в цикл/StackOverflow
         audits.add(Api.cycle(Cfg.MIX_POOL, (int) (Cfg.MIX_SEED + Diag.putsOk()), java.util.Set.of(), (int) (Cfg.MIX_SEED + Diag.putsOk()) + 50));
@@ -146,6 +207,15 @@ public class DatapoolSimulation extends Simulation {
             if (pools.body().contains("\"diverged\":true")) fails.add("/api/v1/pools reports diverged pools");
         } else {
             Diag.info("/api/v1/pools is not available (status " + pools.status() + "), divergence check skipped");
+        }
+        // зацикливания: ни один get-next-value не должен исчерпать лимит попыток, не найдя данные (вредный цикл)
+        Api.Resp stat = Api.get("/api/v1/statistics?minutes=120");
+        if (stat.status() == 200) {
+            double harmful = 0;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"loopFails\":\\[([^\\]]*)\\]").matcher(stat.body());
+            while (m.find()) for (String v : m.group(1).split(",")) if (!v.isBlank() && !v.equals("null")) harmful += Double.parseDouble(v);
+            Diag.info("harmful loops (retry limit exceeded) in the statistics window: " + (long) harmful);
+            if (harmful > 0) fails.add("harmful loops: " + (long) harmful);
         }
         Diag.info(fails.isEmpty() ? "VERDICT: PASS" : "VERDICT: FAIL " + fails);
         Diag.write("target/datapool-diag.txt");

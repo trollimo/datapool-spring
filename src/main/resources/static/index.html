@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Manual datapool service</title>
+<style>.menu{background:#243447;padding:8px 16px;margin:-8px -8px 12px -8px}.menu a{color:#cfe0f1;text-decoration:none;margin-right:18px;font-size:14px;font-family:sans-serif}.menu a.cur{color:#fff;font-weight:bold;border-bottom:2px solid #6cb4ee}</style>
 </head>
 <body>
+<nav class="menu"><a href="/" class="cur">Документация</a><a href="/pools.html">Пулы</a><a href="/statistics.html">Статистика</a></nav>
+
 <h1>Схема интеграции</h1>
 <p><img src="./schema.jpg" alt="" /></p>
 <h1></h1>
@@ -27,6 +30,7 @@
             <li><a href="#Delete">Удаление пула</a></li>
             <li><a href="#ResetSeq">Начать читать пул сначала</a></li>
             <li><a href="#Pools">Состояние пулов и исправление счётчика</a></li>
+            <li><a href="#Mcp">MCP для ИИ-агентов и спецификация OpenAPI</a></li>
             <li><a href="#Download">Скачать пул</a></li>
 
 
@@ -182,11 +186,21 @@
 <p>Метод <code>GET /api/v1/pools</code> возвращает таблицу всех пулов. Первыми идут пулы, у которых счётчики в БД и в кэше приложения (локере) расходятся.</p>
 <p>Поля: <code>pool</code>, <code>diverged</code>, <code>lockerSize</code> (размер кэша), <code>dbMaxRid</code>, <code>dbRows</code>, <code>holes</code> (дыры в rid = max(rid) - число строк), <code>dbLocked</code> / <code>lockerLocked</code> (сколько строк занято в БД и в кэше), <code>lockedOnlyInDb</code> / <code>lockedOnlyInLocker</code> (расходящиеся блокировки), <code>empty</code>, <code>cursor</code> (текущее значение sequence выдачи), <code>cursorEpoch</code>.</p>
 <p>Расхождением считается: размер кэша не равен max(rid) в БД, либо множества занятых строк в БД и в кэше различаются.</p>
-<p>То же в виде страницы с сортировкой по любому столбцу: <a href="pools.html">pools.html</a>. У каждого пула есть кнопка «Исправить/сбросить счётчик», а чекбоксы позволяют исправить любое количество пулов одним действием.</p>
+<p>То же в виде страницы с сортировкой по любому столбцу: <a href="pools.html">pools.html</a>. В каждой строке справа три кнопки-иконки: сбросить счётчик, скачать пул (CSV) и удалить пул (с подтверждением «Да/Нет»). Чекбоксы и кнопка «Сбросить счётчики выбранных» исправляют любое количество пулов одним действием.</p>
+<p>Скачивание использует метод <code>GET /api/v1/download/csv</code>, удаление — <code>DELETE /api/v1/drop-pool</code>. Формат выгрузки — CSV с разделителем <code>;</code> или <code>,</code>, первая строка — заголовки (поля JSON). Такой файл можно загрузить обратно методом upload-csv-as-json с тем же разделителем (значения не должны содержать разделитель и переводы строк).</p>
 <p>Исправление пересобирает кэш из БД (размер = max(rid), занятые строки берутся из таблицы) и ставит курсор sequence на первую свободную строку, тем же кодом, что используется в /resetseq. Схема БД не меняется.</p>
 <blockquote>
     <p>Один пул: <em><code>curl -X POST "http://localhost:8080/api/v1/pools/repair?env=load&amp;pool=demo_clients"</code></em></p>
     <p>Несколько пулов: <em><code>curl -X POST -H 'Content-Type: application/json' -d '["LOAD.P1","LOAD.P2"]' "http://localhost:8080/api/v1/pools/repair-batch"</code></em></p>
+</blockquote>
+
+<h2><a id="Mcp"></a>MCP для ИИ-агентов и спецификация OpenAPI</h2>
+<p>Спецификация OpenAPI 3.0 всех методов лежит в репозитории: <code>api-specification/openapi.yaml</code>.</p>
+<p>Метод <code>POST /mcp</code> — MCP-сервер (Streamable HTTP, JSON-RPC 2.0). Подключается к ИИ-агенту как HTTP MCP-сервер, адрес <code>http://localhost:8080/mcp</code>. Первым агент вызывает тулу <code>about</code>: там описано, как устроен датапул, как искать проблемы и как не испортить идущие тесты.</p>
+<p>Тулы: about, list_pools, counters_stats (статистика по расходящимся счётчикам), repair_pools, reset_sequence, unlock, put_value, upload_csv, download_pool_csv, drop_pool. Они вызывают тот же код, что и REST. Методов <code>get-next-value</code> и <code>search-by-key</code> в MCP нет: это горячий путь нагрузочных тестов.</p>
+<p>Защита от агентов: имена проверяются (буквы, цифры, подчёркивание), не больше 30 вызовов тул в минуту (<code>datapool.mcp.max-calls-per-minute</code>), тяжёлые операции (загрузка, выгрузка, удаление, исправление) выполняются по одной, выгрузка ограничена 5000 строк (<code>datapool.mcp.download.max-rows</code>), удаление требует <code>confirm=ENV.POOL</code>.</p>
+<blockquote>
+    <p>Пример: <em><code>curl -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"counters_stats","arguments":{}}}' http://localhost:8080/mcp</code></em></p>
 </blockquote>
 
 <h2><a id="Download"></a>Скачивание пула обратно в CSV</h2>

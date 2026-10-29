@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Датапул: статистика</title>
+<style>
+ body{font-family:sans-serif;margin:0;color:#222;background:#fafbfc}
+ .menu{background:#243447;padding:8px 16px}
+ .menu a{color:#cfe0f1;text-decoration:none;margin-right:18px;font-size:14px}
+ .menu a.cur{color:#fff;font-weight:bold;border-bottom:2px solid #6cb4ee}
+ main{padding:12px 16px;position:relative}
+ .bar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:10px;font-size:14px}
+ .dd{position:relative}
+ .dd button{padding:5px 12px;border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer}
+ .dd .panel{display:none;position:absolute;z-index:5;top:32px;left:0;background:#fff;border:1px solid #bbb;border-radius:4px;padding:8px 10px;min-width:190px;max-height:320px;overflow:auto;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+ .dd.open .panel{display:block}
+ .panel label{display:block;white-space:nowrap;padding:2px 0;font-size:13px}
+ .panel .links{margin-bottom:6px;font-size:12px}
+ .panel .links a{cursor:pointer;color:#1a6fb5;margin-right:10px}
+ .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+ @media(max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+ .card{background:#fff;border:1px solid #dde3ea;border-radius:6px;padding:8px 10px;position:relative;min-width:0}
+ .card.wide{grid-column:1/-1}
+ .card h3{margin:2px 0 4px;font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+ .card h3 label{font-size:12px;font-weight:normal;color:#445}
+ svg{width:100%;height:230px;display:block}
+ .axis text{font-size:10px;fill:#667}
+ .axis line,.axis path{stroke:#ccd}
+ .grid-line{stroke:#eef0f3}
+ .tip{position:absolute;pointer-events:none;background:rgba(30,40,55,.93);color:#fff;font-size:12px;padding:6px 8px;border-radius:4px;display:none;white-space:nowrap;z-index:4}
+ .legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;margin:4px 0 0}
+ .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+ .empty{color:#889;font-size:13px;padding:80px 0;text-align:center}
+ .hint{color:#667;font-size:12px}
+ table{border-collapse:collapse;width:100%;font-size:13px}
+ th,td{border-bottom:1px solid #e6eaef;padding:5px 10px;text-align:right}
+ th{background:#f1f4f8;font-weight:600;border-bottom:1px dotted #99a}
+ th:first-child,td:first-child{text-align:left}
+ td.bad{background:#fde2e2;color:#b00020;font-weight:bold}
+</style>
+</head>
+<body>
+<nav class="menu"><a href="/">Документация</a><a href="/pools.html">Пулы</a><a href="/statistics.html" class="cur">Статистика</a></nav>
+<main>
+ <div class="bar">
+  <div class="dd" id="dd"><button id="ddBtn">Пулы</button>
+   <div class="panel"><div class="links"><a id="selAll">все</a><a id="selNone">снять</a></div><div id="ddList"></div></div></div>
+  <span class="hint" id="status"></span>
+ </div>
+ <div class="grid">
+  <div class="card"><h3>Запросы в секунду (rps) <label><input type="checkbox" id="total" checked> линия «Итого»</label></h3><div id="c1"></div></div>
+  <div class="card"><h3>Время ответа, мс (среднее)</h3><div id="c2"></div></div>
+  <div class="card"><h3>Ошибки в секунду</h3><div id="c3"></div></div>
+  <div class="card"><h3><span id="t4">Остаток пула, %</span> <label><input type="checkbox" id="occupied"> показать занятое</label></h3><div id="c4"></div></div>
+  <div class="card wide"><h3>Частота зацикливаний, 1/с <span class="hint">повторы внутри get-next-value: строка занята или отсутствует, курсор сдвигается</span></h3><div id="c5"></div></div>
+ </div>
+ <div class="card"><h3>Сводка по пулам <span class="hint">за окно графиков; красным — цикл исчерпал лимит попыток и не нашёл данные</span></h3><div id="tbl"></div></div>
+ <div class="tip" id="tip"></div>
+</main>
+<script>
+const PALETTE=['#1f77b4','#e4572e','#2ca02c','#9467bd','#e6a100','#17a2b8','#d6336c','#7f7f7f','#8c564b','#5b8c00'];
+const CACHE_MS=15000;           // к серверу не чаще раза в 15 секунд, в том числе после перезагрузки вкладки
+const TOTAL='Итого';
+let data=null, sel=null, colors={}, lastFetch=0;
+
+function fmtTime(ts){const d=new Date(ts);return d.toTimeString().substring(0,8);}
+function fmtTick(ts,span){return fmtTime(ts).substring(0,span<600000?8:5);}
+function nice(max){if(!(max>0))return 1;const p=Math.pow(10,Math.floor(Math.log10(max)));const n=max/p;return (n<=1?1:n<=2?2:n<=5?5:10)*p;}
+function fmtNum(v){return v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2).replace(/\.?0+$/,'');}
+function pref(k,def){try{const v=localStorage.getItem(k);return v===null?def:v==='1';}catch(e){return def;}}
+function setPref(k,v){try{localStorage.setItem(k,v?'1':'0');}catch(e){}}
+
+function load(force){
+ const now=Date.now();
+ if(!force){
+  try{const c=JSON.parse(sessionStorage.getItem('statCache')||'null');
+   if(c&&now-c.t<CACHE_MS&&c.v===2){lastFetch=c.t;data=c.data;afterLoad();return Promise.resolve();}}catch(e){}
+ }
+ return fetch('api/v1/statistics?minutes=60').then(r=>r.json()).then(d=>{
+  lastFetch=Date.now();data=d;
+  try{sessionStorage.setItem('statCache',JSON.stringify({t:lastFetch,v:2,data:d}));}catch(e){}
+  afterLoad();
+ });
+}
+function afterLoad(){
+ const names=Object.keys(data.pools).sort();
+ names.forEach((n,i)=>{colors[n]=i<PALETTE.length?PALETTE[i]:'hsl('+Math.round((i*137.508)%360)+',65%,42%)';});
+ if(sel===null){try{sel=JSON.parse(localStorage.getItem('statPools')||'null');}catch(e){}}
+ if(sel===null)sel=names.slice();
+ buildDropdown(names);render();
+}
+function buildDropdown(names){
+ const list=document.getElementById('ddList');
+ list.innerHTML=names.map(n=>`<label><input type="checkbox" value="${n}" ${sel.includes(n)?'checked':''}> <i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${colors[n]}"></i> ${n}</label>`).join('');
+ list.querySelectorAll('input').forEach(cb=>cb.onchange=()=>{sel=[...list.querySelectorAll('input:checked')].map(x=>x.value);save();render();});
+ document.getElementById('ddBtn').textContent='Пулы ('+sel.filter(n=>names.includes(n)).length+' из '+names.length+') ▾';
+}
+function save(){try{localStorage.setItem('statPools',JSON.stringify(sel));}catch(e){}}
+document.getElementById('ddBtn').onclick=e=>{document.getElementById('dd').classList.toggle('open');e.stopPropagation();};
+document.addEventListener('click',e=>{if(!document.getElementById('dd').contains(e.target))document.getElementById('dd').classList.remove('open');});
+document.getElementById('selAll').onclick=()=>{sel=Object.keys(data.pools).sort();save();buildDropdown(sel);render();};
+document.getElementById('selNone').onclick=()=>{sel=[];save();buildDropdown(Object.keys(data.pools).sort());render();};
+const totalCb=document.getElementById('total'), occCb=document.getElementById('occupied');
+totalCb.checked=pref('statTotal',true);occCb.checked=pref('statOccupied',false);
+totalCb.onchange=()=>{setPref('statTotal',totalCb.checked);render();};
+occCb.onchange=()=>{setPref('statOccupied',occCb.checked);render();};
+
+function render(){
+ if(!data)return;
+ const occupied=occCb.checked;
+ document.getElementById('t4').textContent=occupied?'Занято в пуле, %':'Остаток пула, %';
+ const names=Object.keys(data.pools).sort().filter(n=>sel.includes(n));
+ chart('c1',names,'rps',v=>v,'',0,totalCb.checked);
+ chart('c2',names,'latencyMs',v=>v,' мс');
+ chart('c3',names,'errors',v=>v,'/с');
+ chart('c4',names,'lockedPct',v=>occupied?v:100-v,' %',100);
+ chart('c5',names,'loops',v=>v,'/с');
+ table(names);
+}
+// простой линейный график на SVG: оси, сетка, линии по пулам (разрыв на пропусках), подсказка при наведении; withTotal — сумма выбранных пулов
+function chart(id,names,key,tr,unit,fixedMax,withTotal){
+ const box=document.getElementById(id), ts=data.timestamps;
+ if(!ts.length||!names.length){box.innerHTML='<div class="empty">'+(ts.length?'Выберите пулы':'Данных пока нет: первая точка через '+data.intervalSec+' с')+'</div>';return;}
+ const W=Math.max(300,box.clientWidth),H=230,L=44,R=10,T=8,B=22;
+ const series=names.map(n=>({n,v:data.pools[n][key].map(x=>x===null?null:tr(x)),w:1.6}));
+ if(withTotal){
+  const tot=ts.map((t,i)=>{let s=0,any=false;names.forEach(n=>{const x=data.pools[n][key][i];if(x!==null){s+=x;any=true;}});return any?s:null;});
+  series.unshift({n:TOTAL,v:tot,w:2.6,total:true});
+ }
+ let max=0;series.forEach(s=>s.v.forEach(x=>{if(x!==null&&x>max)max=x;}));
+ const ymax=fixedMax||nice(max*1.05), t0=ts[0], t1=ts[ts.length-1]||t0+1, span=Math.max(1,t1-t0);
+ const X=t=>L+(t-t0)/span*(W-L-R), Y=v=>T+(1-v/ymax)*(H-T-B);
+ const color=s=>s.total?'#111':colors[s.n];
+ let g='';
+ for(let i=0;i<=4;i++){const v=ymax*i/4,y=Y(v);g+=`<line class="grid-line" x1="${L}" x2="${W-R}" y1="${y}" y2="${y}"/><text x="${L-5}" y="${y+3}" text-anchor="end">${fmtNum(v)}</text>`;}
+ for(let i=0;i<=5;i++){const t=t0+span*i/5,x=X(t);g+=`<text x="${x}" y="${H-6}" text-anchor="${i==0?'start':i==5?'end':'middle'}">${fmtTick(t,span)}</text>`;}
+ let lines='';
+ series.slice().reverse().forEach(s=>{
+  let d='',pen=false;
+  s.v.forEach((v,i)=>{if(v===null){pen=false;return;}d+=(pen?'L':'M')+X(ts[i]).toFixed(1)+' '+Y(v).toFixed(1);pen=true;});
+  if(d)lines+=`<path d="${d}" fill="none" stroke="${color(s)}" stroke-width="${s.w}" stroke-linejoin="round"${s.total?' stroke-dasharray="6 3"':''}/>`;
+ });
+ const legend='<div class="legend">'+series.map(s=>`<span><i style="background:${color(s)}"></i>${s.n}</span>`).join('')+'</div>';
+ box.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><g class="axis">${g}</g>${lines}<line id="${id}x" y1="${T}" y2="${H-B}" stroke="#99a" stroke-dasharray="3 3" style="display:none"/><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="transparent"/></svg>${legend}`;
+ const svg=box.querySelector('svg'),cross=document.getElementById(id+'x'),tip=document.getElementById('tip');
+ svg.onmousemove=e=>{
+  const r=svg.getBoundingClientRect(), px=(e.clientX-r.left)/r.width*W;
+  let best=0,bd=1e18;ts.forEach((t,i)=>{const d=Math.abs(X(t)-px);if(d<bd){bd=d;best=i;}});
+  cross.setAttribute('x1',X(ts[best]));cross.setAttribute('x2',X(ts[best]));cross.style.display='';
+  tip.innerHTML='<b>'+fmtTime(ts[best])+'</b><br>'+series.map(s=>`<span style="color:${s.total?'#fff':colors[s.n]}">●</span> ${s.n}: ${s.v[best]===null?'—':fmtNum(s.v[best])+unit}`).join('<br>');
+  tip.style.display='block';
+  const main=document.querySelector('main').getBoundingClientRect();
+  tip.style.left=Math.min(e.clientX-main.left+14,main.width-200)+'px';tip.style.top=(e.clientY-main.top+14)+'px';
+ };
+ svg.onmouseleave=()=>{cross.style.display='none';tip.style.display='none';};
+}
+// сводная таблица: средний/последний/максимальный rps, среднее время ответа (взвешенное по rps), вредные циклы за окно
+function table(names){
+ const box=document.getElementById('tbl');
+ if(!data.timestamps.length||!names.length){box.innerHTML='<div class="empty">'+(data.timestamps.length?'Выберите пулы':'Данных пока нет')+'</div>';return;}
+ const rows=names.map(n=>{
+  const p=data.pools[n], rps=p.rps.map(x=>x===null?0:x);
+  const avg=rps.reduce((a,b)=>a+b,0)/rps.length, last=rps[rps.length-1], mx=Math.max(...rps);
+  let ws=0,ls=0;p.rps.forEach((r,i)=>{if(r!==null&&p.latencyMs[i]!==null){ws+=r;ls+=r*p.latencyMs[i];}});
+  const lat=ws>0?ls/ws:null, fails=p.loopFails.reduce((a,b)=>a+(b||0),0);
+  return `<tr><td><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${colors[n]};margin-right:6px"></i>${n}</td><td>${fmtNum(avg)}</td><td>${fmtNum(last)}</td><td>${fmtNum(mx)}</td><td>${lat===null?'—':fmtNum(lat)}</td><td class="${fails>0?'bad':''}">${fails}</td></tr>`;
+ });
+ box.innerHTML='<table><thead><tr><th title="Имя пула ENV.POOL">Пул</th><th title="Среднее число запросов в секунду за окно графиков">Средний rps</th><th title="Запросов в секунду в последнем интервале (15 с)">Последний rps</th><th title="Наибольшее число запросов в секунду за окно">Максимальный rps</th><th title="Среднее время ответа (RTT на стороне сервиса) за окно, взвешенное по числу запросов">Время ответа, мс</th><th title="Сколько get-next-value исчерпали лимит попыток и не нашли данные (бесконечное зацикливание). Больше 0 — красным: кэш и БД, скорее всего, расходятся, см. страницу «Пулы»">Вредные циклы</th></tr></thead><tbody>'+rows.join('')+'</tbody></table>';
+}
+function status(){
+ if(!lastFetch)return;
+ const left=Math.max(0,Math.ceil((CACHE_MS-(Date.now()-lastFetch))/1000));
+ document.getElementById('status').textContent='Обновлено '+fmtTime(lastFetch)+', следующее через '+left+' с. Окно '+(data?data.windowMinutes:60)+' мин, шаг '+(data?data.intervalSec:15)+' с.';
+}
+load(false);
+setInterval(()=>{status();if(Date.now()-lastFetch>=CACHE_MS)load(true);},1000);
+window.addEventListener('resize',()=>render());
+</script>
+</body>
+</html>

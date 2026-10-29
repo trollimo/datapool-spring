@@ -7,7 +7,9 @@ Run against a started datapool:
     mvn gatling:test -Dgatling.simulationClass=datapool.DatapoolSimulation \
         -Dbase=http://localhost:8080 -Drps=1000 -Dstep=500 -Dsteps=8 -DlevelSec=60 -DsearchW=0
 
-Parameters (-D): `rps` start, `step`, `steps`, `levelSec`, `rampSec`, `warmSec`, `preLockPct`, `longPct`, `holdMs`, `poisonRps` (failing inserts per second, makes a rid hole), `searchW` (share of search-by-key, 0 = off).
+Parameters (-D): `preLockPools` (default p4; for example p1,p2,p3,p4: `preLockPct`% of rows of each listed pool are locked in advance for the whole test), `humanPerMin` (default 2: every human method - pools list/page, repair, repair-batch, resetseq, unlock, download, upload, put+drop, metrics - this many times per minute), `aiPerMin` (default 2: every MCP tool, 0 = off; the server limit is 30 tool calls per minute, so keep aiPerMin <= 2), `rps` start, `step`, `steps`, `levelSec`, `rampSec`, `warmSec`, `preLockPct`, `longPct`, `holdMs`, `poisonRps` (failing inserts per second, makes a rid hole), `searchW` (share of search-by-key, 0 = off).
+
+The human and MCP methods work on service pools h1..h7, never on p1..p5. Methods `get-next-value` and `search-by-key` keep the full intensity.
 
 After the run `Diag` prints the verdict: duplicate locks (the same locked row issued twice), error kinds, and the pool walk of p5. It also calls `GET /api/v1/pools`.
 
