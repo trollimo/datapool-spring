@@ -9,42 +9,82 @@
  th,td{border:1px solid #bbb;padding:4px 8px;text-align:right}
  th{cursor:pointer;background:#eee;user-select:none}
  td.l,th.l{text-align:left}
+ th.noSort{cursor:default}
  tr.bad{background:#fdd}
- button{margin:0 4px}
+ td.act{white-space:nowrap;text-align:center}
+ .ic{border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer;font-size:15px;line-height:1;padding:3px 6px;margin:0 2px}
+ .ic:hover{background:#eef}
+ .ic.del:hover{background:#fcc}
  #msg{margin:8px 0;white-space:pre-wrap}
+ #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);align-items:center;justify-content:center}
+ #modal .box{background:#fff;padding:20px 24px;border-radius:6px;max-width:460px}
+ #modal button{margin:12px 8px 0 0;padding:5px 18px}
+ .hint{color:#666;font-size:12px}
 </style>
 </head>
 <body>
 <h2>Состояние пулов</h2>
 <div>
  <button onclick="load()">Обновить</button>
- <button onclick="repairSelected()">Исправить выбранные</button>
+ <button onclick="repairSelected()" title="Пересобрать кэш из БД и поставить курсор на первую свободную строку у отмеченных пулов">Сбросить счётчики выбранных</button>
  <label><input type="checkbox" id="onlyBad" onchange="render()"> только расходящиеся</label>
+ &nbsp;|&nbsp; Скачивание: CSV, разделитель
+ <select id="delim"><option value=";">;</option><option value=",">,</option></select>
+ <span class="hint">заголовки = поля JSON, файл можно загрузить обратно методом upload-csv-as-json с тем же разделителем (значения не должны содержать разделитель и переводы строк). Выгрузка ограничена 500 000 строк.</span>
 </div>
 <div id="msg"></div>
 <table id="t"><thead></thead><tbody></tbody></table>
+
+<div id="modal"><div class="box">
+ <div id="modalText"></div>
+ <button id="yes">Да</button><button id="no">Нет</button>
+</div></div>
+
 <script>
 const cols=[['pool','Пул'],['diverged','Расхождение'],['lockerSize','Размер локера'],['dbMaxRid','max(rid) в БД'],['dbRows','Строк в БД'],['holes','Дыры'],['dbLocked','locked в БД'],['lockerLocked','locked в локере'],['lockedOnlyInDb','только в БД'],['lockedOnlyInLocker','только в локере'],['empty','empty'],['cursor','Курсор'],['cursorEpoch','Эпоха']];
 let data=[],sortKey=null,sortDir=1;
+function msg(t){document.getElementById('msg').textContent=t;}
 function load(){fetch('api/v1/pools').then(r=>r.json()).then(d=>{data=d;render();});}
 function sortBy(k){if(sortKey===k)sortDir=-sortDir;else{sortKey=k;sortDir=1;}render();}
 function render(){
  const only=document.getElementById('onlyBad').checked;
  let rows=data.filter(r=>!only||r.diverged);
  if(sortKey)rows=rows.slice().sort((a,b)=>{const x=a[sortKey],y=b[sortKey];return (x>y?1:x<y?-1:0)*sortDir;});
- const th=document.querySelector('#t thead');
- th.innerHTML='<tr><th><input type="checkbox" onclick="toggleAll(this)"></th>'+cols.map(c=>`<th class="${c[0]==='pool'?'l':''}" onclick="sortBy('${c[0]}')">${c[1]}${sortKey===c[0]?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'<th>Действие</th></tr>';
+ document.querySelector('#t thead').innerHTML='<tr><th class="noSort"><input type="checkbox" onclick="toggleAll(this)"></th>'+cols.map(c=>`<th class="${c[0]==='pool'?'l':''}" onclick="sortBy('${c[0]}')">${c[1]}${sortKey===c[0]?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'<th class="noSort">Действия</th></tr>';
  document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr class="${r.diverged?'bad':''}"><td><input type="checkbox" class="sel" value="${r.pool}"></td>`+
   cols.map(c=>`<td class="${c[0]==='pool'?'l':''}">${r[c[0]]===null||r[c[0]]===undefined?'':r[c[0]]}</td>`).join('')+
-  `<td><button onclick="repairOne('${r.pool}')">Исправить/сбросить счётчик</button></td></tr>`).join('');
+  `<td class="act"><button class="ic" title="Сбросить счётчик" onclick="repairOne('${r.pool}')">🔧</button>`+
+  `<button class="ic" title="Скачать пул (CSV)" onclick="download('${r.pool}')">⬇️</button>`+
+  `<button class="ic del" title="Удалить пул" onclick="askDelete('${r.pool}')">🗑️</button></td></tr>`).join('');
 }
 function toggleAll(cb){document.querySelectorAll('.sel').forEach(c=>c.checked=cb.checked);}
+function split(p){const i=p.indexOf('.');return [p.substring(0,i),p.substring(i+1)];}
 function post(pools){
  return fetch('api/v1/pools/repair-batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pools)})
-  .then(r=>r.json()).then(res=>{document.getElementById('msg').textContent=res.map(x=>x.pool+': '+(x.ok?'исправлен, размер '+x.lockerSize+', курсор '+x.cursor:'ошибка '+x.message)).join('\n');load();});
+  .then(r=>r.json()).then(res=>{msg(res.map(x=>x.pool+': '+(x.ok?'счётчик сброшен, размер '+x.lockerSize+', курсор '+x.cursor:'ошибка '+x.message)).join('\n'));load();});
 }
 function repairOne(p){post([p]);}
-function repairSelected(){const p=[...document.querySelectorAll('.sel:checked')].map(c=>c.value);if(!p.length){document.getElementById('msg').textContent='Ничего не выбрано';return;}post(p);}
+function repairSelected(){const p=[...document.querySelectorAll('.sel:checked')].map(c=>c.value);if(!p.length){msg('Ничего не выбрано');return;}post(p);}
+// скачивание тем же методом, что и REST: GET /api/v1/download/csv
+function download(p){
+ const [env,pool]=split(p);
+ const d=document.getElementById('delim').value;
+ window.location='api/v1/download/csv?env='+encodeURIComponent(env)+'&pool='+encodeURIComponent(pool)+'&delimiter='+encodeURIComponent(d);
+}
+// удаление тем же методом, что и REST: DELETE /api/v1/drop-pool, с подтверждением
+function ask(text,onYes){
+ document.getElementById('modalText').textContent=text;
+ const m=document.getElementById('modal');m.style.display='flex';
+ document.getElementById('yes').onclick=()=>{m.style.display='none';onYes();};
+ document.getElementById('no').onclick=()=>{m.style.display='none';};
+}
+function askDelete(p){
+ ask('Удалить пул '+p+' вместе с данными, sequence и метриками? Это необратимо.',()=>{
+  const [env,pool]=split(p);
+  fetch('api/v1/drop-pool?env='+encodeURIComponent(env)+'&pool='+encodeURIComponent(pool),{method:'DELETE'})
+   .then(r=>r.text().then(t=>{msg(p+': '+(r.ok?'удалён':'ошибка: '+t));load();}));
+ });
+}
 load();
 </script>
 </body>

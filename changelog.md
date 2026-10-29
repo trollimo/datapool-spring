@@ -1,6 +1,22 @@
 # Changelog
 Service for creating and utilizing test data pools via REST API.
 
+## [2.0.0]
+
+Major version: new interfaces for people and AI agents, `/api/v1/pools` family, removal of the cycle-fix endpoints (they had no meaning after 1.8.0). Existing pools and DB files need no migration.
+
+### Added
+
+- Page `/pools.html`: icon buttons in every row (reset counter, download, delete with a Yes/No confirmation), one bulk operation (reset counters of the selected pools). Download and delete use the existing REST methods `GET /api/v1/download/csv` and `DELETE /api/v1/drop-pool`; the downloaded CSV (headers = JSON fields, delimiter `;` or `,`) can be loaded back with `upload-csv-as-json` using the same delimiter.
+- `api-specification/openapi.yaml`: OpenAPI 3.0.3 specification of all methods including `/mcp`; a test checks that it matches the real endpoints.
+- `POST /mcp`: MCP server (Streamable HTTP, JSON-RPC 2.0) for AI agents. Tools: about, list_pools, counters_stats, repair_pools, reset_sequence, unlock, put_value, upload_csv, download_pool_csv, drop_pool; resource `datapool://about`. They call the same code as REST. `get-next-value` and `search-by-key` are not exposed. The `about` text explains how the pool works, how to troubleshoot, and that tool calls can disturb running tests. Protection: names validated (letters, digits, underscore), 30 tool calls per minute (`datapool.mcp.max-calls-per-minute`), one heavy operation (upload, download, drop, repair) at a time, download limited to `datapool.mcp.download.max-rows` (5000), upload to `datapool.mcp.upload.max-chars`, drop needs `confirm=ENV.POOL`.
+- `SequenceService`: the only place that builds the sequence name and moves the read cursor (used by `/resetseq`, get-next-value and the repair).
+- 79 unit and integration tests (REST, MCP, services, specification); Gatling scenarios for all human and MCP methods (2 calls per minute each, on service pools h1..h7) next to the load methods.
+
+### Changed
+
+- Version 2.0.0.
+
 ## [1.8.0]
 
 ### Fixed

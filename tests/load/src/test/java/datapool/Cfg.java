@@ -23,5 +23,7 @@ public final class Cfg {
     public static final String LOCK_POOL = "p4";
     public static final String MIX_POOL = "p5";
     public static final int POOL_SIZE = num("poolSize", 10_000);
+    public static final double HUMAN_PER_MIN = dbl("humanPerMin", 2);   // каждая «человеческая» ручка, раз в минуту (0 — выключить)
+    public static final double AI_PER_MIN = dbl("aiPerMin", 2);         // каждая MCP-ручка, раз в минуту (0 — выключить)
     public static final int MIX_SEED = num("mixSeed", 1_000);
 }
