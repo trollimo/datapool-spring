@@ -78,14 +78,14 @@ public final class TodoRestController {
 
         try {
             sq = jdbcOperations.queryForObject("select nextval (?)", new String[]{getSeqPrefix(env, pool) + "_rid"}, Long.class);
-            ResponseEntity<String> res = ResponseEntity.ok(jdbcOperations.queryForObject("select rid, text, locked from " + fullPoolName + " where rid = ? and locked = false limit 1",
+            if (locked && !lockerService.tryLock(env, pool, sq.intValue())) {
+                throw new EmptyResultDataAccessException(1);   // строку уже занял другой — как «занято», идём по штатному пути пропуска
+            }
+            ResponseEntity<String> res = ResponseEntity.ok(jdbcOperations.queryForObject("select rid, text, locked from " + fullPoolName + " where rid = ? and (locked = false or ?) limit 1",
                     (resultSet, i) ->
                             new String("{\"rid\":" + resultSet.getLong("rid") +
                                     ",\"values\":" + resultSet.getString("text") +
-                                    ",\"locked\":" + locked + "}"), sq));
-            if (locked) {
-                lockerService.lock(env, pool, sq.intValue());
-            }
+                                    ",\"locked\":" + locked + "}"), sq, locked));
             exp.incRequestsAndLatency(env, pool, "get-next-value", null, start);
             return res;
         } catch (EmptyResultDataAccessException e) {
@@ -440,7 +440,7 @@ public final class TodoRestController {
             indexPrefix = indexPrefix.substring(0, indexPrefix.length() <= maxIndexLength ? indexPrefix.length() : maxIndexLength);
             this.jdbcOperations.execute("CREATE INDEX " + indexPrefix + "_rid ON  " + env + "." + pool + " (rid);");
             this.jdbcOperations.execute("CREATE INDEX " + indexPrefix + "_lc ON  " + env + "." + pool + " (locked);");
-            this.jdbcOperations.execute("CREATE INDEX " + indexPrefix + "_sk ON  " + env + "." + pool + " (searchkey);");
+            this.jdbcOperations.execute("CREATE INDEX " + indexPrefix + "_sk ON  " + env + "." + pool + " (searchkey, locked);");
 
 
             this.jdbcOperations.execute("DROP SEQUENCE if exists " + getSeqPrefix(env, pool) + "_max;");
