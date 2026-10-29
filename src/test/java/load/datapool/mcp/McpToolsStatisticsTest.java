@@ -24,7 +24,7 @@ public class McpToolsStatisticsTest {
     @SuppressWarnings("unchecked")
     @Test
     public void summaryCountsBrokenPoolsAndReasons() {
-        McpTools t = new McpTools(null, null, null, null, null, null);
+        McpTools t = new McpTools(null, null, null, null, null);
         List<Map<String, Object>> all = Arrays.asList(
                 pool("A.P1", true, 5, 10, 2, 1, 0),
                 pool("A.P2", false, 4, 4, 1, 0, 0),
@@ -42,7 +42,7 @@ public class McpToolsStatisticsTest {
 
     @Test
     public void healthyPoolsGiveReassuringAdvice() {
-        McpTools t = new McpTools(null, null, null, null, null, null);
+        McpTools t = new McpTools(null, null, null, null, null);
         Map<String, Object> s = t.statistics(Collections.singletonList(pool("A.P", false, 1, 1, 0, 0, 0)));
         assertEquals(0, s.get("diverged"));
         assertEquals("All counters are consistent.", s.get("advice"));
@@ -50,7 +50,7 @@ public class McpToolsStatisticsTest {
 
     @Test
     public void errorPoolIsReported() {
-        McpTools t = new McpTools(null, null, null, null, null, null);
+        McpTools t = new McpTools(null, null, null, null, null);
         Map<String, Object> bad = new LinkedHashMap<>();
         bad.put("pool", "A.X");
         bad.put("diverged", true);
