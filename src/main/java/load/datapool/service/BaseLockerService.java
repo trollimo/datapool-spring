@@ -241,6 +241,18 @@ public class BaseLockerService implements LockerService {
         }
     }
 
+    /** Атомарно занимает строку: true только если UPDATE действительно перевёл locked false -> true. */
+    @Override
+    public boolean tryLock(String env, String pool, int rid) {
+        pool = tableService.fullName(env, pool);
+        int n = jdbcOperations.update("update " + pool + " set locked = true where rid = ? and locked = false", rid);
+        if (n == 1) {
+            Locker l = lockers.get(pool);
+            synchronized (l) { l.lock(rid); }
+        }
+        return n == 1;
+    }
+
     @Override
     public void unlock(String env, String pool, int rid) {
         pool = tableService.fullName(env, pool);

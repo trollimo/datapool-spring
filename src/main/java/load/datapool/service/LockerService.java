@@ -8,6 +8,7 @@ public interface LockerService {
     void add(String env, String pool);
     void add(String env, String pool, int count);
     void lock(String env, String pool, int rid);
+    boolean tryLock(String env, String pool, int rid);
     void unlock(String env, String pool, int rid);
     void unlock(String env, String pool, String searchKey);
     void unlockAll(String env, String pool);
