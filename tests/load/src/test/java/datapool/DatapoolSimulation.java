@@ -121,6 +121,8 @@ public class DatapoolSimulation extends Simulation {
     static final List<ScenarioBuilder> REST_HUMAN = List.of(
             scenario("human pools list").exec(http("human GET pools").get("/api/v1/pools").check(status().is(200)).check(jsonPath("$[0].pool").exists())),
             scenario("human pools page").exec(http("human GET pools.html").get("/pools.html").check(status().is(200)).check(substring("drop-pool"))),
+            scenario("human statistics api").exec(http("human GET statistics").get("/api/v1/statistics?minutes=60").check(status().is(200)).check(jsonPath("$.timestamps").exists())),
+            scenario("human statistics page").exec(http("human GET statistics.html").get("/statistics.html").check(status().is(200)).check(substring("api/v1/statistics"))),
             scenario("human metrics").exec(http("human GET metrics").get("/metrics").check(status().is(200))),
             scenario("human repair h1").exec(http("human POST pools/repair").post("/api/v1/pools/repair?env=load&pool=h1").check(status().is(200)).check(jsonPath("$.ok").ofBoolean().is(true))),
             scenario("human repair-batch").exec(http("human POST pools/repair-batch").post("/api/v1/pools/repair-batch").header("Content-Type", "application/json")
@@ -190,7 +192,7 @@ public class DatapoolSimulation extends Simulation {
     public void after() {
         // пользователи уже закончили. Проверяем, что после нагрузки каждый пул обходится полным кругом
         List<Api.Audit> audits = new ArrayList<>();
-        for (String p : Cfg.READ_POOLS) audits.add(Api.cycle(p, Cfg.POOL_SIZE, java.util.Set.of(), Cfg.POOL_SIZE + 200));
+        for (String p : Cfg.READ_POOLS) audits.add(Api.cycle(p, Cfg.POOL_SIZE, Diag.prelocked(p), Cfg.POOL_SIZE + 200));
         audits.add(Api.cycle(Cfg.LOCK_POOL, Cfg.POOL_SIZE, Diag.heldSet(), Cfg.POOL_SIZE + 200));
         // p5: после нагрузки один клиент обходит пул; дыра в rid (упавшая вставка) превращает чтение в цикл/StackOverflow
         audits.add(Api.cycle(Cfg.MIX_POOL, (int) (Cfg.MIX_SEED + Diag.putsOk()), java.util.Set.of(), (int) (Cfg.MIX_SEED + Diag.putsOk()) + 50));
@@ -205,6 +207,15 @@ public class DatapoolSimulation extends Simulation {
             if (pools.body().contains("\"diverged\":true")) fails.add("/api/v1/pools reports diverged pools");
         } else {
             Diag.info("/api/v1/pools is not available (status " + pools.status() + "), divergence check skipped");
+        }
+        // зацикливания: ни один get-next-value не должен исчерпать лимит попыток, не найдя данные (вредный цикл)
+        Api.Resp stat = Api.get("/api/v1/statistics?minutes=120");
+        if (stat.status() == 200) {
+            double harmful = 0;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"loopFails\":\\[([^\\]]*)\\]").matcher(stat.body());
+            while (m.find()) for (String v : m.group(1).split(",")) if (!v.isBlank() && !v.equals("null")) harmful += Double.parseDouble(v);
+            Diag.info("harmful loops (retry limit exceeded) in the statistics window: " + (long) harmful);
+            if (harmful > 0) fails.add("harmful loops: " + (long) harmful);
         }
         Diag.info(fails.isEmpty() ? "VERDICT: PASS" : "VERDICT: FAIL " + fails);
         Diag.write("target/datapool-diag.txt");

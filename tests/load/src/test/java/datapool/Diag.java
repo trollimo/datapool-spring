@@ -36,6 +36,13 @@ public final class Diag {
         }
     }
 
+    private static final Map<String, Set<Long>> PRELOCKED = new ConcurrentHashMap<>();   // пул -> строки, занятые заранее и навсегда
+
+    /** Строка занята заранее (до начала нагрузки) в пуле, у которого нет сценария блокировок. */
+    public static void prelock(String pool, long rid) { PRELOCKED.computeIfAbsent(pool, k -> ConcurrentHashMap.newKeySet()).add(rid); }
+
+    public static Set<Long> prelocked(String pool) { return PRELOCKED.getOrDefault(pool, Set.of()); }
+
     public static void release(long rid) { HELD.remove(rid); }
 
     public static int heldCount() { return HELD.size(); }

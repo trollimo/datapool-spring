@@ -49,4 +49,20 @@ public class BaseLockerTest {
         assertEquals(1, l.firstUnlockId());
         assertEquals(epoch + 1, l.cursorEpoch());
     }
+
+    @Test
+    public void lockedCounterFollowsLockUnlockAndIsIdempotent() {
+        BaseLocker l = new BaseLocker("T", 10);
+        l.lock(3);
+        l.lock(3);          // повторная блокировка не увеличивает счётчик
+        l.lock(4);
+        assertEquals(2, l.lockedCount());
+        l.unlock(3);
+        l.unlock(3);        // повторная разблокировка не уменьшает
+        assertEquals(1, l.lockedCount());
+        l.unlockAll();
+        assertEquals(0, l.lockedCount());
+        l.reset(5, Arrays.asList(1, 1, 2, 9));   // дубль и rid за размером не считаются
+        assertEquals(2, l.lockedCount());
+    }
 }

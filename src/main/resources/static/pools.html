@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <title>Датапул: состояние пулов</title>
 <style>
- body{font-family:sans-serif;margin:16px}
+ body{font-family:sans-serif;margin:0 16px 16px}
+ .menu{background:#243447;padding:8px 16px;margin:0 -16px 12px -16px}
+ .menu a{color:#cfe0f1;text-decoration:none;margin-right:18px;font-size:14px}
+ .menu a.cur{color:#fff;font-weight:bold;border-bottom:2px solid #6cb4ee}
  table{border-collapse:collapse}
  th,td{border:1px solid #bbb;padding:4px 8px;text-align:right}
  th{cursor:pointer;background:#eee;user-select:none}
@@ -23,6 +26,7 @@
 </style>
 </head>
 <body>
+<nav class="menu"><a href="/">Документация</a><a href="/pools.html" class="cur">Пулы</a><a href="/statistics.html">Статистика</a></nav>
 <h2>Состояние пулов</h2>
 <div>
  <button onclick="load()">Обновить</button>
