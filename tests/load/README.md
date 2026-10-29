@@ -1,6 +1,6 @@
 # Load / regression tests (Gatling)
 
-Gatling 3.9.5 on JDK 17 + Maven. Scenario `datapool.DatapoolSimulation`: 5 pools (p1-p3 read, p4 read with lock, p5 insert + read by different tracks).
+Gatling 3.14.3 on JDK 17 + Maven. Scenario `datapool.DatapoolSimulation`: 5 pools (p1-p3 read, p4 read with lock, p5 insert + read by different tracks).
 
 Run against a started datapool:
 
@@ -21,3 +21,6 @@ Reference results (8 cores, service and Gatling on one machine, 1000 -> 4500 rps
 |---|---|---|---|
 | 1.7.8 | 178 per 145k locks | 0 | hole in rid: endless loop, StackOverflowError |
 | 1.8.0 | 0 per 155k locks | 0 of 1.45M requests | hole in rid: no loop, no ALTER SEQUENCE storm |
+| 1.8.0 + search-by-key 5% | 0 per 114k locks | 0 of 1.1M requests (500 -> 4500 rps, 40 s steps) | search p99 20 ms, 55k searches, no collapse (1.7.8 collapsed at ~500 rps) |
+
+If Gatling is upgraded, remove `target` first (stale classes give NoSuchMethodError).

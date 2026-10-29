@@ -15,7 +15,7 @@ Service for creating and utilizing test data pools via REST API.
 
 - `GET /api/v1/pools` and the page `/pools.html`: all pools, diverged first, sorting by any column.
 - `POST /api/v1/pools/repair` and `/api/v1/pools/repair-batch`, buttons and checkboxes on the page: rebuild the cache from the DB and reset the cursor, without a DB migration.
-- Unit and integration tests, Gatling regression tests in `tests/load`.
+- Unit and integration tests, Gatling regression tests in `tests/load` (Gatling 3.14.3, gatling-maven-plugin 4.21.12). The test prints `VERDICT: PASS/FAIL`.
 
 ### Removed
 
