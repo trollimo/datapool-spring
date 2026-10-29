@@ -10,6 +10,8 @@ public interface Locker {
     /** Размер кэша должен быть не меньше rid последней строки пула (rid берётся из sequence, поэтому может быть больше количества строк). */
     void ensureSize(int size);
     int getSize();
+    /** Полная пересборка кэша: размер = maxRid, заняты ровно lockedIds. Используется при исправлении расхождения. */
+    void reset(int size, List<Integer> lockedIds);
     void lock(int id);
     void unlock(int id);
     void unlockAll();

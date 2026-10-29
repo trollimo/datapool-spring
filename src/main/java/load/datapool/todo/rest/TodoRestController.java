@@ -2,7 +2,9 @@ package load.datapool.todo.rest;
 
 import load.datapool.db.H2Template;
 import load.datapool.prometheus.Exporter;
+import load.datapool.service.Locker;
 import load.datapool.service.LockerService;
+import load.datapool.service.SequenceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -30,10 +33,11 @@ public final class TodoRestController {
     private final H2Template jdbcOperations;
     private final Exporter exp;
     private final LockerService lockerService;
+    private final SequenceService sequenceService;
+    @Value("${datapool.getNext.maxRetries:1000}")
+    private int getNextMaxRetries;
     private String extErrText = ""; //Extended error cause
-    private int retryGetNextCount = 0;// retry if skip seq
     private int maxTableNameLength = 16;
-    private int maxSequenceLength = 25;
     private int maxIndexLength = 25;
     @Value("${db.maxKeyColumnLength:1500}")
     private int maxKeyColumnLength;
@@ -45,16 +49,14 @@ public final class TodoRestController {
     @Value("${db.viewer.password:viewer}")
     private String viewerPassword;
     private int maxLengthNotValidRows = 25000;//Max length wrong lines for response
-    private int retryGetNextMaxCount = 999999;
     private int seqCycleCache = 5;
-    private final ReentrantLock restartPoolLock = new ReentrantLock();
     private ReentrantLock createPoolLock = new ReentrantLock();
-    private boolean cycleFixSequence = true; // For code debuging only. Make loop of getNextData method for sync status locked with DB
     @Autowired
-    public TodoRestController(H2Template jdbcOperations, Exporter exp, LockerService lockerService) {
+    public TodoRestController(H2Template jdbcOperations, Exporter exp, LockerService lockerService, SequenceService sequenceService) {
         this.jdbcOperations = jdbcOperations;
         this.exp = exp;
         this.lockerService = lockerService;
+        this.sequenceService = sequenceService;
     }
 
     @GetMapping(path = "/get-next-value")
@@ -62,8 +64,6 @@ public final class TodoRestController {
                                               @RequestParam(value = "pool", defaultValue = "testpool") String pool,
                                               @RequestParam(value = "locked", defaultValue = "false") boolean locked) {
         Instant start = Instant.now();
-        Long sq = -1L;
-        extErrText = ""; //TODO
         String fullPoolName = fullPoolName(env, pool);
 
         if (!lockerService.poolExist(env, pool)){
@@ -76,75 +76,74 @@ public final class TodoRestController {
             return tableIsEmptyResponse(fullPoolName);
         }
 
-        try {
-            sq = jdbcOperations.queryForObject("select nextval (?)", new String[]{getSeqPrefix(env, pool) + "_rid"}, Long.class);
-            if (locked && !lockerService.tryLock(env, pool, sq.intValue())) {
-                throw new EmptyResultDataAccessException(1);   // строку уже занял другой — как «занято», идём по штатному пути пропуска
-            }
-            ResponseEntity<String> res = ResponseEntity.ok(jdbcOperations.queryForObject("select rid, text, locked from " + fullPoolName + " where rid = ? and (locked = false or ?) limit 1",
-                    (resultSet, i) ->
-                            new String("{\"rid\":" + resultSet.getLong("rid") +
-                                    ",\"values\":" + resultSet.getString("text") +
-                                    ",\"locked\":" + locked + "}"), sq, locked));
-            exp.incRequestsAndLatency(env, pool, "get-next-value", null, start);
-            return res;
-        } catch (EmptyResultDataAccessException e) {
-            if (restartPoolLock.tryLock()) {
-                if (fixSequenceState(env, pool, sq)) {
-                    logger.info("Sequence reseted for " + fullPoolName + " was value = " + sq);
-//                    lockerService.lock(env, pool, sq.intValue()); // If wrong sequence, then need to lock this rid
-                    exp.incRequestsAndLatency(env, pool, "get-next-value", "Sequence reseted", start);
-                } else {
-                    restartPoolLock.unlock();
-                    exp.incRequestsAndLatency(env, pool, "get-next-value", "Sequence does not reset", start);
-                    return tableIsEmptyResponse(fullPoolName);
-                }
-                restartPoolLock.unlock();
-            } else {
-                try {
-                    while (restartPoolLock.isLocked()) {
-                        Thread.sleep(50);
+        Locker locker = (Locker) lockerService.getLocker(env, pool);
+        long sq = -1L;
+        for (int attempt = 0; attempt < getNextMaxRetries; attempt++) {
+            long epoch = locker.cursorEpoch();
+            try {
+                sq = sequenceService.nextRid(env, pool);
+                if (!locked || lockerService.tryLock(env, pool, (int) sq)) {
+                    String row = selectRow(fullPoolName, sq, locked);
+                    if (row != null) {
+                        exp.incRequestsAndLatency(env, pool, "get-next-value", null, start);
+                        return ResponseEntity.ok(row);
                     }
-                } catch (InterruptedException ex) {
-                    ex.printStackTrace();
                 }
+            } catch (DataAccessException e) {
+                exp.incRequestsAndLatency(env, pool, "get-next-value", "Error data access", start);
+                return ResponseEntity.badRequest().body(e.getMessage() + "\\\n ERROR " + env + "." + pool);
             }
-            exp.incRequestsAndLatency(env, pool, "get-next-value", "Achtung! Bad looping", start);
-            if (cycleFixSequence){
-                return getNextData(env, pool, locked); // скорее всего это не работает из-за изоляции запросов в БД. Alter не меняет значение сиквенса в БД
+            // строка занята или её нет (дыра в rid): сдвигаем курсор вперёд, один поток за раз
+            if (locker.getRestartLock().tryLock()) {
+                try {
+                    if (locker.cursorEpoch() == epoch && !fixSequenceState(env, pool, sq)) {
+                        exp.incRequestsAndLatency(env, pool, "get-next-value", "Sequence does not reset", start);
+                        return tableIsEmptyResponse(fullPoolName);
+                    }
+                } finally {
+                    locker.getRestartLock().unlock();
+                }
+            } else {
+                locker.getRestartLock().lock();   // ждём, пока другой поток сдвинет курсор
+                locker.getRestartLock().unlock();
             }
-            return ResponseEntity.badRequest().body("Error. Need sync cache with database. Returned locked value for rid " + sq + " in " + env + "." + pool);
-        } catch (DataAccessException e) {
-            exp.incRequestsAndLatency(env, pool, "get-next-value", "Error data access", start);
-            return ResponseEntity.badRequest().body(e.getMessage() + "\\\n" + extErrText + "\\\n ERROR " + env + "." + pool);
+            if (lockerService.isMarkedAsEmpty(env, pool)) {
+                exp.incRequestsAndLatency(env, pool, "get-next-value", "Empty pool", start);
+                return tableIsEmptyResponse(fullPoolName);
+            }
         }
+        exp.incRequestsAndLatency(env, pool, "get-next-value", "Retry limit exceeded", start);
+        return ResponseEntity.badRequest().body("Error. Need sync cache with database (see /pools.html). Retry limit " + getNextMaxRetries + " exceeded for " + env + "." + pool);
     }
 
+    private String selectRow(String fullPoolName, long rid, boolean locked) {
+        List<String> rows = jdbcOperations.query("select rid, text from " + fullPoolName + " where rid = ? and (locked = false or ?) limit 1",
+                (resultSet, i) -> "{\"rid\":" + resultSet.getLong("rid") +
+                        ",\"values\":" + resultSet.getString("text") +
+                        ",\"locked\":" + locked + "}", rid, locked);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** Сдвигает курсор на следующую свободную строку (строго после currentValue), иначе в начало; false — свободных строк нет. */
     private boolean fixSequenceState(String env, String pool, Long currentValue) {
         if (currentValue < 0) return false; //Some undefined sequence error
         try {
-            int sqMax = lockerService.firstBiggerUnlockedId(env, pool, currentValue.intValue());
-            Long newSqValue = 0L;
-            if (sqMax == 0) //Need reset sequence to start, no values forward
-            // You can change for sequence CYCLE type if slow puts are planing
-            {
-                 newSqValue = (long) lockerService.firstUnlockRid(env, pool);
-                if (newSqValue == 0) {
+            int next = lockerService.firstBiggerUnlockedId(env, pool, currentValue.intValue());
+            if (next == 0) {
+                next = lockerService.firstUnlockRid(env, pool);   // конец пула — возвращаемся к началу
+                if (next == 0) {
                     lockerService.markAsEmpty(env, pool);
-                    newSqValue = 1L;
-                    jdbcOperations.update("ALTER SEQUENCE " + getSeqPrefix(env, pool) + "_rid" + " RESTART WITH ?", newSqValue);
+                    sequenceService.restartRid(env, pool, 1);
+                    ((Locker) lockerService.getLocker(env, pool)).nextCursorEpoch();
                     return false;
                 }
-                jdbcOperations.update("ALTER SEQUENCE " + getSeqPrefix(env, pool) + "_rid" + " RESTART WITH ?", newSqValue);
-                return true;
-            } else {//need reset sequence to next available value
-                newSqValue = Long.valueOf(sqMax);
-                this.jdbcOperations.update("ALTER SEQUENCE " + getSeqPrefix(env, pool) + "_rid" + " RESTART WITH ?; ", newSqValue);
-                return true;
             }
-
+            sequenceService.restartRid(env, pool, next);
+            ((Locker) lockerService.getLocker(env, pool)).nextCursorEpoch();
+            logger.info("Sequence reseted for {}.{} was value = {}, now {}", env, pool, currentValue, next);
+            return true;
         } catch (DataAccessException e) {
-            logger.error(e.getMessage() + "\\\n" + extErrText);
+            logger.error(e.getMessage());
             return false;
         }
     }
@@ -200,19 +199,22 @@ public final class TodoRestController {
                 return ResponseEntity.badRequest().body("Lock pool exception for create " + pool);
             }
         }
-        synchronized (lockerService.getLocker(env, pool)) {
+        long rid = -1;
+        {
             try {
+                rid = sequenceService.nextMax(env, pool);
                 if (searchKey.equals("")) {//No
-                    this.jdbcOperations.update("insert into " + env + "." + pool + "(rid, text, locked) values (nextval (?),?,?);", getSeqPrefix(env, pool) + "_max", text, false);
+                    this.jdbcOperations.update("insert into " + env + "." + pool + "(rid, text, locked) values (?,?,?);", rid, text, false);
                 } else {
-                    this.jdbcOperations.update("insert into " + env + "." + pool + "(rid, text, searchkey, locked) values (nextval (?),?,?,?);", getSeqPrefix(env, pool) + "_max", text, searchKey, false);
+                    this.jdbcOperations.update("insert into " + env + "." + pool + "(rid, text, searchkey, locked) values (?,?,?,?);", rid, text, searchKey, false);
                 }
             } catch (Exception e) {
                 logger.error(e.getMessage());
                 exp.incRequestsAndLatency(env, pool, "put-value", "Undefined INSERT exception", start);
                 return ResponseEntity.badRequest().body(e.getMessage());
             }
-            lockerService.add(env, pool);
+            lockerService.ensureSize(env, pool, (int) rid);
+            lockerService.markAsNotEmpty(env, pool);
         }
         exp.incRequestsAndLatency(env, pool, "put-value", null, start);
         return ResponseEntity.ok(new String((long) 1 + " Inserted:" + "locked = false; searchKey = " + searchKey));
@@ -296,7 +298,10 @@ public final class TodoRestController {
                     , searchKey));
 
             if (locked) {
-                lockerService.lock(env, pool, rid[0].intValue());
+                if (!lockerService.tryLock(env, pool, rid[0].intValue())) {
+                    exp.incRequestsAndLatency(env, pool, "search-by-key", "Already locked", start);
+                    return ResponseEntity.badRequest().body("Row " + rid[0] + " was locked by another request. Repeat the request.");
+                }
             }
             exp.incRequestsAndLatency(env, pool, "search-by-key", null, start);
             return res;
@@ -406,9 +411,7 @@ public final class TodoRestController {
     }
 
     private String getSeqPrefix(String env, String pool) {
-        String seqPrefix = new String(env + "." + "seq_" + pool);
-        seqPrefix = seqPrefix.substring(0, seqPrefix.length() <= maxSequenceLength ? seqPrefix.length() : maxSequenceLength);
-        return seqPrefix;
+        return sequenceService.seqPrefix(env, pool);
     }
 
     private boolean createTable(String env, String pool) {
@@ -509,7 +512,7 @@ public final class TodoRestController {
         Instant start = Instant.now();
         Long newSqValue = 1L;
         try {
-        	jdbcOperations.update("ALTER SEQUENCE " + getSeqPrefix(env, pool) + "_rid" + " RESTART WITH ?", newSqValue);
+        	sequenceService.restartRid(env, pool, newSqValue);
         } catch (Exception e) {
             logger.error(e.getMessage());
             exp.incRequestsAndLatency(env, pool, "resetseq", "Exception", start);
@@ -517,15 +520,5 @@ public final class TodoRestController {
         }
         exp.incRequestsAndLatency(env, pool, "resetseq", null, start);
         return ResponseEntity.ok(new String("Row id sequence has been reseted for pool "+pool));
-    }
-
-    @PostMapping(path = "/set-cycle-fix-sequence")
-    public ResponseEntity<Object> setCycleValue(@RequestParam(value = "cycle-fix-sequence", defaultValue = "false") boolean isCycle) {
-        this.cycleFixSequence = isCycle;
-        return ResponseEntity.ok(new String("cycleFixSequence = " + isCycle));
-    }
-    @GetMapping(path = "/get-cycle-fix-sequence")
-    public ResponseEntity<Object> getCycleValue() {
-        return ResponseEntity.ok(new String("Current value cycleFixSequence = " + this.cycleFixSequence));
     }
 }

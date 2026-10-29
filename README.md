@@ -35,6 +35,14 @@ Service for creating and utilizing test data pools via REST API.
 - [Local](http://localhost:8080/) You can open web documentaion everytime. Simple open http://localhost:8080/ where datapool has been started.
 - [Or open resourse](src/main/resources/static/index.html)
 
+# Pools status
+
+Open http://localhost:8080/pools.html: table of all pools (diverged first), repair button per pool and bulk repair. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
+
+# Load tests
+
+Gatling regression tests for rid divergence, duplicate locks and looping: [tests/load](tests/load/README.md).
+
 # Build with maven
 
 `mvn clean verify`

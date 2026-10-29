@@ -64,6 +64,17 @@ public class BaseLocker implements Locker {
     }
 
     @Override
+    public synchronized void reset(int newSize, List<Integer> lockedIds) {
+        size = newSize;
+        list = new boolean[size + bufferSize];
+        for (int id : lockedIds) {
+            if (id >= startIndex && id <= size) list[id - startIndex] = true;
+        }
+        markedAsEmpty = size == 0;
+        cursorEpoch.incrementAndGet();
+    }
+
+    @Override
     public synchronized void lock(int id) {
         if (id < startIndex || id > list.length) return; // Some collision
         list[id - startIndex] = true;

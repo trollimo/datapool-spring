@@ -1,5 +1,7 @@
 package load.datapool.service;
 
+import java.util.Map;
+
 public interface LockerService {
 
     void putPool(String env, String pool);
@@ -21,4 +23,9 @@ public interface LockerService {
     void markAsNotEmpty(String env, String pool);
 
     Object getLocker(String env, String pool);
+    void ensureSize(String env, String pool, int size);
+    /** Снимок реестра: полное имя пула (ENV.POOL) -> локер. */
+    Map<String, Locker> allLockers();
+    /** Пересобирает кэш пула из БД: размер = max(rid), locked из таблицы. */
+    void reloadFromDb(String env, String pool);
 }
