@@ -1,80 +1,112 @@
-# datapool-spring
-Service for creating and utilizing test data pools via REST API.
+<h1 align="center">datapool-spring</h1>
 
-# How it's work
+<p align="center">
+  Сервис тестовых данных для нагрузочных тестов: пулы строк, которые выдаются по кругу, блокируются и ищутся по ключу.<br>
+  REST · страницы «Пулы» и «Статистика» · MCP для ИИ-агентов · OpenAPI
+</p>
+
+<p align="center">
+  <img alt="version" src="https://img.shields.io/badge/version-3.1.1-blue">
+  <img alt="java" src="https://img.shields.io/badge/java-8%2B-orange">
+  <img alt="spring boot" src="https://img.shields.io/badge/spring%20boot-2.1-6db33f">
+  <img alt="db" src="https://img.shields.io/badge/db-H2-lightgrey">
+  <img alt="tests" src="https://img.shields.io/badge/tests-118%20passed-brightgreen">
+  <img alt="load" src="https://img.shields.io/badge/load-4500%20RPS%20%7C%20p50%201%20ms-brightgreen">
+</p>
+
+---
+
+## Возможности
+
+- **Выдача по кругу** (`get-next-value`), с блокировкой строки или без; **поиск по ключу**; вставка; загрузка и выгрузка CSV.
+- **Надёжность под нагрузкой:** без дублей блокировок и бесконечных циклов, проверено до **4500 RPS** (RTT p50 1 мс, p99 35 мс) при ~30 % занятых строк.
+- 🛠 **Страница «Пулы»:** состояние кэша и БД, починка счётчика, скачать и удалить пул (иконки в строке, подтверждение удаления).
+- 📈 **Страница «Статистика»:** RPS, RTT, ошибки, остаток пула и зацикливания за час, сводная таблица.
+- 🤖 **MCP** (`/mcp`): обслуживание пулов из ИИ-агента, с лимитами и инструкцией «как не испортить идущий тест».
+- 📜 **OpenAPI 3.0** всех ручек.
+
+| | |
+|---|---|
+| [**Новые возможности со скриншотами**](docs/FEATURES.md) | страницы, MCP, надёжность, структура кода |
+| [**Результаты нагрузочного тестирования**](docs/load-test-3.1.md) | профиль, RPS, RTT, графики, сравнение версий |
+| [Список изменений](changelog.md) | по версиям |
+| [Спецификация API](api-specification/openapi.yaml) | OpenAPI 3.0.3 |
+| [Gatling-тесты](tests/load/README.md) | как запускать и читать вердикт |
+
+![Статистика](docs/images/statistics-top.jpg)
+
+## Как это работает
 
 ![](src/main/resources/static/schema.jpg)
 
-# Start service
+Пул — таблица H2 `ENV.POOL` (`rid`, `text` JSON, `searchkey`, `locked`). Курсор чтения — sequence в БД, блокировки дополнительно кэшируются в памяти приложения.
 
-`cd ./bin/`
+## Запуск
 
-`java -jar datapool-service-<version>.jar`
+Нужна только Java 8+. Jar самодостаточный, Maven и доступ в сеть не нужны:
 
-# Use it
+```bash
+cd ./bin/
+java -jar datapool-service-3.1.1.jar
+```
 
-- Download demo data pool 
+Страницы: `http://localhost:8080/` (документация), `/pools.html`, `/statistics.html`.
 
-`curl https://raw.githubusercontent.com/Roman-Kislyy/datapool-spring/main/src/test/test.csv --output test.csv -k` 
+## Быстрый пример
 
-- Upload file to local datapool service 
+```bash
+# скачать демо-пул и загрузить в сервис
+curl https://raw.githubusercontent.com/Roman-Kislyy/datapool-spring/main/src/test/test.csv --output test.csv -k
+curl -F 'file=@test.csv' "http://localhost:8080/api/v1/upload-csv-as-json?env=load&pool=demo_clients&override=true&delimiter=,"
 
-`curl -F 'file=@test.csv' "http://localhost:8080/api/v1/upload-csv-as-json?env=load&pool=demo_clients&override=true&delimiter=,"`
-
-- Get value from datapool service `curl "http://localhost:8080/api/v1/get-next-value?pool=demo_clients&locked=false" -s`
+# взять следующее значение
+curl -s "http://localhost:8080/api/v1/get-next-value?pool=demo_clients&locked=false"
+```
 
 ![](src/main/resources/static/demo_use.jpg)
 
-# Configure
+## Настройка
 
-[bin/application.properties](bin/application.properties)
+Файл [bin/application.properties](bin/application.properties). Из нового:
 
-# Documentation
+| Параметр | По умолчанию | Назначение |
+|---|---|---|
+| `datapool.getNext.maxRetries` | 1000 | лимит попыток `get-next-value` (защита от зацикливания) |
+| `datapool.statistics.interval-seconds` | 15 | шаг сбора статистики |
+| `datapool.statistics.window-minutes` | 60 | сколько истории хранить в памяти |
+| `datapool.mcp.max-calls-per-minute` | 30 | лимит вызовов тул MCP |
+| `datapool.mcp.download.max-rows` | 5000 | лимит выгрузки через MCP |
+| `datapool.mcp.upload.max-chars` | 1000000 | лимит загрузки через MCP |
 
-- [Docs htmlpreview](https://htmlpreview.github.io/?https://github.com/Roman-Kislyy/datapool-spring/blob/master/src/main/resources/static/index.html)
-- [Local](http://localhost:8080/) You can open web documentaion everytime. Simple open http://localhost:8080/ where datapool has been started.
-- [Or open resourse](src/main/resources/static/index.html)
+## Документация
 
-# Pools status
+- [Документация сервиса (htmlpreview)](https://htmlpreview.github.io/?https://github.com/Roman-Kislyy/datapool-spring/blob/master/src/main/resources/static/index.html)
+- Локально: `http://localhost:8080/` после запуска.
+- [Исходник документации](src/main/resources/static/index.html)
 
-Open http://localhost:8080/pools.html: table of all pools (diverged first), icon buttons per pool (reset counter, download CSV, delete with confirmation) and bulk reset of counters. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
+## Структура кода
 
-# Statistics page
+```
+todo/rest, mcp   контроллеры: параметры, вызов сервиса, метрики запроса
+service          сценарии (PoolService, CsvExportService, ...), кэш блокировок, статистика
+repository       PoolRepository: весь SQL и DDL пулов
+prometheus, db   экспортёр метрик, JDBC
+```
 
-Open http://localhost:8080/statistics.html: rps (with a total line), response time, errors, remaining share of the pool, frequency of cycling, summary table. Data: `GET /api/v1/statistics` (last hour, sampled every 15 s in memory).
+Структура БД (таблица, индексы `_rid`/`_lc`/`_sk`, sequence `SEQ_<POOL>_RID`/`_MAX`) без миграции не меняется: `DbStructureTest` сверяет её с эталоном.
 
-# Code structure
+## Сборка
 
-    todo/rest, mcp  controllers: parameters in, PoolService/PoolDiagnosticsService out, request metrics
-    service         use cases (PoolService, CsvExportService, PoolDiagnosticsService), lock cache (BaseLockerService, BaseLocker), SequenceService
-    repository      PoolRepository: all SQL and DDL of pools
-    prometheus, db  metrics exporter, JDBC template
+```bash
+mvn clean verify     # тесты + jar в bin/
+```
 
-The DB structure (table `ENV.POOL`: rid, text, searchkey, locked; indexes `_rid`, `_lc`, `_sk`; sequences `SEQ_<POOL>_RID`, `_MAX`) must not change without a migration; `DbStructureTest` compares it with the golden DDL.
+Нагрузочные тесты (Gatling, JDK 17): [tests/load](tests/load/README.md).
 
-# API specification and MCP
+## Полезные ссылки
 
-- OpenAPI 3.0: [api-specification/openapi.yaml](api-specification/openapi.yaml)
-- MCP for AI agents: `POST http://localhost:8080/mcp` (Streamable HTTP, JSON-RPC 2.0). Add it to an agent as an HTTP MCP server; call the `about` tool first. Tools: about, list_pools, counters_stats, repair_pools, reset_sequence, unlock, put_value, upload_csv, download_pool_csv, drop_pool. Limits: `datapool.mcp.max-calls-per-minute` (30), `datapool.mcp.download.max-rows` (5000), `datapool.mcp.upload.max-chars` (1000000). `get-next-value` and `search-by-key` are not available through MCP.
-
-# Load tests
-
-Gatling regression tests for rid divergence, duplicate locks and looping: [tests/load](tests/load/README.md).
-
-# Build with maven
-
-`mvn clean verify`
-
-# Useful links H2 DB
-
-http://www.h2database.com/html/tutorial.html#using_server
-
-https://www.tutorialspoint.com/h2_database/h2_database_create.htm
-
-# Useful links Spring REST
-
-https://spring.io/guides/gs/rest-service/
-
-https://alexkosarev.name/2019/03/08/rest-api-with-spring/
-
-https://www.baeldung.com/spring-boot-h2-database
+[H2: tutorial](http://www.h2database.com/html/tutorial.html#using_server) ·
+[H2: create](https://www.tutorialspoint.com/h2_database/h2_database_create.htm) ·
+[Spring REST](https://spring.io/guides/gs/rest-service/) ·
+[REST API with Spring](https://alexkosarev.name/2019/03/08/rest-api-with-spring/) ·
+[Spring Boot + H2](https://www.baeldung.com/spring-boot-h2-database)

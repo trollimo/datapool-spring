@@ -235,6 +235,9 @@ public class RestApiTest extends AbstractSpringTest {
         assertTrue(page.contains("api/v1/download/csv"));
         assertTrue(page.contains("api/v1/drop-pool"));
         assertTrue(page.contains("repair-batch"));
+        // подсказки на заголовках и столбец с процентом занятых строк
+        String utf8 = new String(mvc.perform(get("/pools.html")).andReturn().getResponse().getContentAsByteArray(), StandardCharsets.UTF_8);
+        for (String s : new String[]{"lockedPct", "Занято, %", "Дыры", "max(rid) минус число строк", "title=\"${c[2]"}) assertTrue(s, utf8.contains(s));
     }
 
     @Test

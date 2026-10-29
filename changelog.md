@@ -1,6 +1,13 @@
 # Changelog
 Service for creating and utilizing test data pools via REST API.
 
+## [3.1.1]
+
+### Added
+
+- Pools page: hints on every column header (what a hole is, what the counters mean), the column "Занято, %" (share of locked rows).
+- Documentation: `docs/FEATURES.md` (new features with screenshots), `docs/load-test-3.1.md` (load profile, RPS and RTT results, graphs), the README is rewritten.
+
 ## [3.1.0]
 
 ### Added

@@ -13,6 +13,7 @@
  th{cursor:pointer;background:#eee;user-select:none}
  td.l,th.l{text-align:left}
  th.noSort{cursor:default}
+ th.hd{border-bottom:1px dotted #667}
  tr.bad{background:#fdd}
  td.act{white-space:nowrap;text-align:center}
  .ic{border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer;font-size:15px;line-height:1;padding:3px 6px;margin:0 2px}
@@ -45,16 +46,31 @@
 </div></div>
 
 <script>
-const cols=[['pool','Пул'],['diverged','Расхождение'],['lockerSize','Размер локера'],['dbMaxRid','max(rid) в БД'],['dbRows','Строк в БД'],['holes','Дыры'],['dbLocked','locked в БД'],['lockerLocked','locked в локере'],['lockedOnlyInDb','только в БД'],['lockedOnlyInLocker','только в локере'],['empty','empty'],['cursor','Курсор'],['cursorEpoch','Эпоха']];
+const cols=[
+ ['pool','Пул','Имя пула: ENV.POOL (схема.таблица)'],
+ ['diverged','Расхождение','true — кэш приложения и БД не совпадают (размер кэша или набор занятых строк). Строки могут не выдаваться или выдаваться неверно: нажмите «Сбросить счётчик»'],
+ ['lockerSize','Размер локера','Размер кэша блокировок в памяти приложения. Должен совпадать с max(rid) в БД'],
+ ['dbMaxRid','max(rid) в БД','Наибольший номер строки (rid) в таблице пула'],
+ ['dbRows','Строк в БД','Сколько строк реально лежит в таблице'],
+ ['holes','Дыры','max(rid) минус число строк: номера rid, под которыми в таблице нет строки (упавшая вставка, удалённая строка). Не ошибка: читатель такие номера пропускает, но при большом числе впустую тратит попытки'],
+ ['dbLocked','locked в БД','Сколько строк помечено занятыми (locked=true) в таблице'],
+ ['lockerLocked','locked в локере','Сколько строк занято по кэшу приложения. Должно совпадать с «locked в БД»'],
+ ['lockedPct','Занято, %','Доля занятых строк: locked в локере / размер локера × 100'],
+ ['lockedOnlyInDb','только в БД','Занято в БД, но кэш считает их свободными: такие строки не будут выданы. Лечится сбросом счётчика'],
+ ['lockedOnlyInLocker','только в локере','Занято по кэшу, но в БД свободны: строки зря недоступны. Лечится сбросом счётчика'],
+ ['empty','empty','true — пул помечен пустым (свободных строк нет): запросы получают ответ «пуст» без обращения к БД'],
+ ['cursor','Курсор','Последнее значение sequence выдачи (rid), с которого идёт чтение по кругу'],
+ ['cursorEpoch','Эпоха','Сколько раз сдвигали курсор: проход пула по кругу, пропуск занятых строк, сброс счётчика']];
 let data=[],sortKey=null,sortDir=1;
 function msg(t){document.getElementById('msg').textContent=t;}
 function load(){fetch('api/v1/pools').then(r=>r.json()).then(d=>{data=d;render();});}
 function sortBy(k){if(sortKey===k)sortDir=-sortDir;else{sortKey=k;sortDir=1;}render();}
 function render(){
+ data.forEach(r=>{r.lockedPct=r.lockerSize>0?Math.round(r.lockerLocked*1000/r.lockerSize)/10:0;});
  const only=document.getElementById('onlyBad').checked;
  let rows=data.filter(r=>!only||r.diverged);
  if(sortKey)rows=rows.slice().sort((a,b)=>{const x=a[sortKey],y=b[sortKey];return (x>y?1:x<y?-1:0)*sortDir;});
- document.querySelector('#t thead').innerHTML='<tr><th class="noSort"><input type="checkbox" onclick="toggleAll(this)"></th>'+cols.map(c=>`<th class="${c[0]==='pool'?'l':''}" onclick="sortBy('${c[0]}')">${c[1]}${sortKey===c[0]?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'<th class="noSort">Действия</th></tr>';
+ document.querySelector('#t thead').innerHTML='<tr><th class="noSort"><input type="checkbox" onclick="toggleAll(this)"></th>'+cols.map(c=>`<th class="${c[0]==='pool'?'l':''} hd" title="${c[2].replace(/"/g,'&quot;')}" onclick="sortBy('${c[0]}')">${c[1]}${sortKey===c[0]?(sortDir>0?' ▲':' ▼'):''}</th>`).join('')+'<th class="noSort" title="Сбросить счётчик · скачать CSV · удалить пул">Действия</th></tr>';
  document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr class="${r.diverged?'bad':''}"><td><input type="checkbox" class="sel" value="${r.pool}"></td>`+
   cols.map(c=>`<td class="${c[0]==='pool'?'l':''}">${r[c[0]]===null||r[c[0]]===undefined?'':r[c[0]]}</td>`).join('')+
   `<td class="act"><button class="ic" title="Сбросить счётчик" onclick="repairOne('${r.pool}')">🔧</button>`+

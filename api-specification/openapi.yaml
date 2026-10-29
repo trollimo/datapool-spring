@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Datapool service API
-  version: 3.1.0
+  version: 3.1.1
   description: |
     Test data pools for load tests. A pool is an H2 table ENV.POOL (rid, text JSON, searchkey, locked).
 
