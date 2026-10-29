@@ -1,6 +1,6 @@
 package load.datapool.service;
 
-import load.datapool.db.H2Template;
+import load.datapool.repository.PoolRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,13 +13,13 @@ import java.util.*;
 public class PoolDiagnosticsService {
 
     private final Logger logger = LoggerFactory.getLogger(PoolDiagnosticsService.class);
-    private final H2Template jdbc;
+    private final PoolRepository repository;
     private final LockerService lockerService;
     private final SequenceService sequences;
 
     @Autowired
-    public PoolDiagnosticsService(H2Template jdbc, LockerService lockerService, SequenceService sequences) {
-        this.jdbc = jdbc;
+    public PoolDiagnosticsService(PoolRepository repository, LockerService lockerService, SequenceService sequences) {
+        this.repository = repository;
         this.lockerService = lockerService;
         this.sequences = sequences;
     }
@@ -47,12 +47,12 @@ public class PoolDiagnosticsService {
     }
 
     private Map<String, Object> describe(String full, Locker locker) {
-        Integer maxRid = jdbc.queryForObject("SELECT max(rid) FROM " + full, Integer.class);
-        Integer rows = jdbc.queryForObject("SELECT count(rid) FROM " + full, Integer.class);
-        Set<Integer> dbLocked = new HashSet<>(jdbc.queryForList("SELECT rid FROM " + full + " WHERE locked = true", Integer.class));
+        Integer maxRid = repository.maxRid(full);
+        long rows = repository.countRows(full);
+        Set<Integer> dbLocked = new HashSet<>(repository.lockedRids(full));
         Set<Integer> cacheLocked = new HashSet<>(locker.lockedIds());
         int max = maxRid == null ? 0 : maxRid;
-        int count = rows == null ? 0 : rows;
+        int count = (int) rows;
 
         Set<Integer> onlyDb = new TreeSet<>(dbLocked);
         onlyDb.removeAll(cacheLocked);
@@ -92,7 +92,7 @@ public class PoolDiagnosticsService {
             m.put("message", "Pool not found");
             return m;
         }
-        Locker locker = (Locker) lockerService.getLocker(env, pool);
+        Locker locker = lockerService.getLocker(env, pool);
         locker.getRestartLock().lock();
         try {
             lockerService.reloadFromDb(env, pool);

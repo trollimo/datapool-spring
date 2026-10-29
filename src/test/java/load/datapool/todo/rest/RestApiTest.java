@@ -241,4 +241,33 @@ public class RestApiTest extends AbstractSpringTest {
     public void removedCycleEndpointsAreGone() throws Exception {
         assertEquals(404, mvc.perform(get("/api/v1/get-cycle-fix-sequence")).andReturn().getResponse().getStatus());
     }
+
+    @Test
+    public void badNamesAreRejectedOnEveryEndpointAndDoNotPolluteMetrics() throws Exception {
+        fill(1);
+        String[] bad = {"x%3Bdrop%20table%20y", "a.b", "a%20b", "x%27--", "%22q%22"};
+        for (String b : bad) {
+            for (String param : new String[]{"pool=" + b + "&env=tst", "env=" + b + "&pool=" + pool}) {
+                String[] gets = {"get-next-value", "search-by-key?search-key=k&", "resetseq", "download/csv"};
+                for (String g : gets) {
+                    String url = "/api/v1/" + g + (g.contains("?") ? "" : "?") + param;
+                    assertEquals(url, 400, mvc.perform(get(url)).andReturn().getResponse().getStatus());
+                }
+                assertEquals(400, mvc.perform(post("/api/v1/put-value?" + param).content("{}")).andReturn().getResponse().getStatus());
+                assertEquals(400, mvc.perform(post("/api/v1/unlock?rid=1&" + param)).andReturn().getResponse().getStatus());
+                assertEquals(400, mvc.perform(delete("/api/v1/drop-pool?" + param)).andReturn().getResponse().getStatus());
+                assertEquals(400, upload(param, "a\n1\n").getResponse().getStatus());
+            }
+        }
+        // свой пул цел, имена из запросов в метрики не попали
+        assertEquals(200, next(false).getResponse().getStatus());
+        String metrics = body(mvc.perform(get("/metrics")).andReturn());
+        assertFalse(metrics, metrics.toUpperCase().contains("DROP TABLE"));
+        assertFalse(metrics, metrics.contains("A.B"));
+    }
+
+    private MvcResult upload(String query, String csv) throws Exception {
+        MockMultipartFile f = new MockMultipartFile("file", "x.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8));
+        return mvc.perform(multipart("/api/v1/upload-csv-as-json?" + query).file(f)).andReturn();
+    }
 }

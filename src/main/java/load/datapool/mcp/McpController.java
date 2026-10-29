@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class McpController {
 
-    public static final String SERVER_VERSION = "2.0.0";
+    public static final String SERVER_VERSION = "3.0.0";
     static final String ABOUT_URI = "datapool://about";
     private static final String[] SUPPORTED = {"2025-06-18", "2025-03-26", "2024-11-05"};
 

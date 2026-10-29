@@ -39,6 +39,15 @@ Service for creating and utilizing test data pools via REST API.
 
 Open http://localhost:8080/pools.html: table of all pools (diverged first), icon buttons per pool (reset counter, download CSV, delete with confirmation) and bulk reset of counters. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
 
+# Code structure
+
+    todo/rest, mcp  controllers: parameters in, PoolService/PoolDiagnosticsService out, request metrics
+    service         use cases (PoolService, CsvExportService, PoolDiagnosticsService), lock cache (BaseLockerService, BaseLocker), SequenceService
+    repository      PoolRepository: all SQL and DDL of pools
+    prometheus, db  metrics exporter, JDBC template
+
+The DB structure (table `ENV.POOL`: rid, text, searchkey, locked; indexes `_rid`, `_lc`, `_sk`; sequences `SEQ_<POOL>_RID`, `_MAX`) must not change without a migration; `DbStructureTest` compares it with the golden DDL.
+
 # API specification and MCP
 
 - OpenAPI 3.0: [api-specification/openapi.yaml](api-specification/openapi.yaml)

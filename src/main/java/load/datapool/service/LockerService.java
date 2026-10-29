@@ -22,7 +22,7 @@ public interface LockerService {
     void markAsEmpty(String env, String pool);
     void markAsNotEmpty(String env, String pool);
 
-    Object getLocker(String env, String pool);
+    Locker getLocker(String env, String pool);
     void ensureSize(String env, String pool, int size);
     /** Снимок реестра: полное имя пула (ENV.POOL) -> локер. */
     Map<String, Locker> allLockers();

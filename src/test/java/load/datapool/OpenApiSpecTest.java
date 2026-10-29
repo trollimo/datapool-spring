@@ -29,7 +29,7 @@ public class OpenApiSpecTest extends AbstractSpringTest {
     public void specIsOpenApi3() throws Exception {
         Map<String, Object> s = spec();
         assertTrue(s.get("openapi").toString().startsWith("3.0"));
-        assertEquals("2.0.0", ((Map<String, Object>) s.get("info")).get("version"));
+        assertEquals(load.datapool.mcp.McpController.SERVER_VERSION, ((Map<String, Object>) s.get("info")).get("version"));
     }
 
     @SuppressWarnings("unchecked")

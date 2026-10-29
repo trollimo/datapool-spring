@@ -1,6 +1,26 @@
 # Changelog
 Service for creating and utilizing test data pools via REST API.
 
+## [3.0.0]
+
+Layered structure of the code. REST API, MCP, the DB structure (tables, indexes, sequences) and the data are unchanged: an existing database starts with the new jar without a migration (checked on a copy of the database from 2.0.0: schema identical, pools, locks and cursors restored).
+
+### Changed
+
+- `TodoRestController` (524 lines with SQL, DDL and business logic) is split into layers: thin controllers (`DatapoolController`, `CsvDownloadController`, `PoolsController`, `McpController`) -> `PoolService` (use cases), `CsvExportService`, `PoolDiagnosticsService`, `SequenceService` -> `PoolRepository` (all pool SQL and DDL in one place). The hot path (`get-next-value`) is moved without changes in the algorithm.
+- Errors of the use cases are `PoolException` (status, text, metric label); the response texts of the previous versions are kept.
+- MCP calls the services directly, not the REST controllers.
+- `LockerService.getLocker` returns `Locker` (no casts).
+
+### Fixed
+
+- Names `env` and `pool` of every REST method are validated (letters, digits, underscore; up to 64 characters). Before, they were inserted into SQL as they came (SQL injection through `drop-pool`, `download/csv`, `resetseq` and others). Requests with a wrong name get HTTP 400 and do not create metric series.
+- Removed the mutable field `extErrText` of the singleton controller (data race between requests).
+
+### Added
+
+- Tests: 101 (DB structure against the golden DDL, names, `PoolService` with mocks, bad names on every REST method).
+
 ## [2.0.0]
 
 Major version: new interfaces for people and AI agents, `/api/v1/pools` family, removal of the cycle-fix endpoints (they had no meaning after 1.8.0). Existing pools and DB files need no migration.
