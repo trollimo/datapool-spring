@@ -39,6 +39,10 @@ Service for creating and utilizing test data pools via REST API.
 
 Open http://localhost:8080/pools.html: table of all pools (diverged first), icon buttons per pool (reset counter, download CSV, delete with confirmation) and bulk reset of counters. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
 
+# Statistics page
+
+Open http://localhost:8080/statistics.html: rps (with a total line), response time, errors, remaining share of the pool, frequency of cycling, summary table. Data: `GET /api/v1/statistics` (last hour, sampled every 15 s in memory).
+
 # Code structure
 
     todo/rest, mcp  controllers: parameters in, PoolService/PoolDiagnosticsService out, request metrics

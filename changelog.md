@@ -1,6 +1,18 @@
 # Changelog
 Service for creating and utilizing test data pools via REST API.
 
+## [3.1.0]
+
+### Added
+
+- Page `/statistics.html`: five charts from the last hour (rps with a dashed total line that can be switched off, mean response time, errors per second, remaining share of the pool with a switch to the occupied share, frequency of cycling) and a summary table at the bottom (pool, average / last / maximum rps, response time, harmful loops; red when more than 0). Pure SVG and JavaScript, no libraries; multi-select filter by pool; the browser asks the server at most once per 15 seconds, also after a page reload.
+- `GET /api/v1/statistics`: the history behind the page. A sampler takes a snapshot of the Prometheus counters and the lock cache every 15 seconds (`datapool.statistics.interval-seconds`) and keeps 60 minutes in memory (`datapool.statistics.window-minutes`); the history is empty after a restart. Nothing is added to the hot path of `get-next-value`.
+- Metric `datapool_get_next_retries`: retries inside `get-next-value` (the row was locked or absent and the cursor was moved). A harmful loop is a request that used up `datapool.getNext.maxRetries` without finding data (`Retry limit exceeded`); an exhausted pool is not one.
+- Minimal menu (Documentation, Pools, Statistics) at the top of every HTML page.
+- `BaseLocker` keeps a counter of locked rows (O(1) instead of a pass through the array).
+- Tests: 118 in total, among them 30% locked rows in several pools under concurrent reads (no endless loops), the harmful loop caused by a cache that disagrees with the DB (finite, counted, ends after repair).
+- Gatling: `-DpreLockPools=p1,p2,p3,p4 -DpreLockPct=30` locks a share of rows of several pools for the whole test; the verdict fails when harmful loops are found; statistics are part of the human methods.
+
 ## [3.0.0]
 
 Layered structure of the code. REST API, MCP, the DB structure (tables, indexes, sequences) and the data are unchanged: an existing database starts with the new jar without a migration (checked on a copy of the database from 2.0.0: schema identical, pools, locks and cursors restored).

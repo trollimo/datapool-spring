@@ -16,6 +16,7 @@ public class BaseLocker implements Locker {
     private final String poolName;
     private boolean[] list;
     private int size = 0;
+    private int lockedCounter = 0; // сколько rid занято; держим счётчик, чтобы lockedCount() не пробегал массив
     private int bufferSize = 1000;
     public static final int startIndex = 1;
     private boolean markedAsEmpty = false; // Mark true if the pool has become empty. There is no need to check table in the DB
@@ -67,8 +68,12 @@ public class BaseLocker implements Locker {
     public synchronized void reset(int newSize, List<Integer> lockedIds) {
         size = newSize;
         list = new boolean[size + bufferSize];
+        lockedCounter = 0;
         for (int id : lockedIds) {
-            if (id >= startIndex && id <= size) list[id - startIndex] = true;
+            if (id >= startIndex && id <= size && !list[id - startIndex]) {
+                list[id - startIndex] = true;
+                lockedCounter++;
+            }
         }
         markedAsEmpty = size == 0;
         cursorEpoch.incrementAndGet();
@@ -77,18 +82,21 @@ public class BaseLocker implements Locker {
     @Override
     public synchronized void lock(int id) {
         if (id < startIndex || id > list.length) return; // Some collision
+        if (!list[id - startIndex]) lockedCounter++;
         list[id - startIndex] = true;
     }
 
     @Override
     public synchronized void unlock(int id) {
         if (id < startIndex || id > list.length) return;
+        if (list[id - startIndex]) lockedCounter--;
         list[id - startIndex] = false;
     }
 
     @Override
     public synchronized void unlockAll() {
         Arrays.fill(list, false);
+        lockedCounter = 0;
     }
 
     @Override
@@ -135,9 +143,7 @@ public class BaseLocker implements Locker {
 
     @Override
     public synchronized int lockedCount() {
-        int n = 0;
-        for (boolean b : list) if (b) n++;
-        return n;
+        return lockedCounter;
     }
 
     @Override

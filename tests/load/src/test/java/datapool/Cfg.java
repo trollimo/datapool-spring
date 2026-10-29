@@ -25,5 +25,7 @@ public final class Cfg {
     public static final int POOL_SIZE = num("poolSize", 10_000);
     public static final double HUMAN_PER_MIN = dbl("humanPerMin", 2);   // каждая «человеческая» ручка, раз в минуту (0 — выключить)
     public static final double AI_PER_MIN = dbl("aiPerMin", 2);         // каждая MCP-ручка, раз в минуту (0 — выключить)
+    /** Пулы, в которых preLockPct строк занимается заранее и навсегда (через запятую). По умолчанию только p4. */
+    public static final String[] PRELOCK_POOLS = str("preLockPools", "p4").split(",");
     public static final int MIX_SEED = num("mixSeed", 1_000);
 }

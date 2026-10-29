@@ -40,6 +40,7 @@ public class PoolServiceTest {
         when(repository.selectRowJson("tst", "p", 2, false)).thenReturn("{\"rid\":2}");
         assertEquals("{\"rid\":2}", service.nextValue("tst", "p", false));
         verify(lockers, never()).tryLock(anyString(), anyString(), anyInt());
+        verify(exp, never()).increaseRetries(anyString(), anyString(), anyInt());   // успешный путь без повторов ничего не считает
     }
 
     @Test
@@ -60,6 +61,7 @@ public class PoolServiceTest {
         assertEquals("{\"rid\":3}", service.nextValue("tst", "p", false));
         verify(sequences).restartRid("tst", "p", 3);
         assertEquals("cursor epoch grows after the move", 1, locker.cursorEpoch());
+        verify(exp).increaseRetries("tst", "p", 1);
     }
 
     @Test
@@ -75,6 +77,7 @@ public class PoolServiceTest {
             assertTrue(e.getMessage().contains("Retry limit 3"));
         }
         verify(sequences, times(3)).nextRid("tst", "p");
+        verify(exp).increaseRetries("tst", "p", 3);
     }
 
     @Test

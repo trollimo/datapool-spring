@@ -1,5 +1,6 @@
 package load.datapool.prometheus;
 
+import io.prometheus.client.Collector;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
@@ -17,6 +18,7 @@ import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +52,11 @@ public class Exporter {
             .name("datapool_sum_latency")
             .labelNames(labelNamesExt)
             .help("Self response time (micro sec). Sum for requests by method").register(c);
+
+    static final Counter getNextRetries = Counter.build()
+            .name("datapool_get_next_retries")
+            .labelNames(labelNames)
+            .help("Retries inside get-next-value: row was locked or absent and the cursor was moved (cycling).").register(c);
 
     static final Counter requestsCount = Counter.build()
             .name("datapool_requests_count")
@@ -135,10 +142,59 @@ public class Exporter {
         if (!isCalcAVRows) return -1;
         return ((Long)this.jdbcOperations.queryForObject("SELECT COUNT (locked) FROM " + schema + "." +pool + "  where locked != true", Long.class)).intValue();
     }
+
+    /** Накопленные с запуска запросы, ошибки и суммарное время ответа (микросекунды) одного пула. */
+    public static final class Totals {
+        public long requests;
+        public long errors;
+        public long latencyMicros;
+        public long retries;     // повторы внутри get-next-value (сдвиги курсора)
+        public long loopFails;   // запросы, у которых цикл исчерпал лимит попыток, не найдя данные
+    }
+
+    /** Подписи успешных ответов: по ним запрос не считается ошибкой, хотя details непустой. */
+    private static final String LOOP_FAIL = "Retry limit exceeded";
+    private static final java.util.Set<String> NOT_ERRORS = new java.util.HashSet<>(java.util.Arrays.asList("", "File prepared"));
+
+    /**
+     * Накопленные счётчики по пулам (ключ ENV.POOL) для сборщика статистики. Читает коллекторы напрямую, без текстового вывода /metrics.
+     * Ошибка — запрос с непустым details (кроме успешных подписей).
+     */
+    public Map<String, Totals> requestTotals() {
+        Map<String, Totals> res = new LinkedHashMap<>();
+        for (Collector.MetricFamilySamples family : requestsCount.collect()) {
+            for (Collector.MetricFamilySamples.Sample sample : family.samples) {
+                Totals t = res.computeIfAbsent(sample.labelValues.get(2) + "." + sample.labelValues.get(3), k -> new Totals());
+                long v = (long) sample.value;
+                t.requests += v;
+                if (!NOT_ERRORS.contains(sample.labelValues.get(5))) t.errors += v;
+                if (LOOP_FAIL.equals(sample.labelValues.get(5)) && "GET-NEXT-VALUE".equals(sample.labelValues.get(4))) t.loopFails += v;
+            }
+        }
+        for (Collector.MetricFamilySamples family : getNextRetries.collect()) {
+            for (Collector.MetricFamilySamples.Sample sample : family.samples) {
+                res.computeIfAbsent(sample.labelValues.get(2) + "." + sample.labelValues.get(3), k -> new Totals()).retries += (long) sample.value;
+            }
+        }
+        for (Collector.MetricFamilySamples family : latency.collect()) {
+            for (Collector.MetricFamilySamples.Sample sample : family.samples) {
+                Totals t = res.computeIfAbsent(sample.labelValues.get(2) + "." + sample.labelValues.get(3), k -> new Totals());
+                t.latencyMicros += (long) sample.value;
+            }
+        }
+        return res;
+    }
+
+    /** Считает повторы внутри одного get-next-value (строка занята или отсутствует, курсор сдвигается). */
+    public void increaseRetries(String env, String pool, int n) {
+        getNextRetries.labels(new String[]{host, String.valueOf(port), env.toUpperCase(), pool.toUpperCase()}).inc(n);
+    }
+
     public void removeMetrics(String env, String pool){
         totalRows.remove(new String [] {host,String.valueOf(port),env.toUpperCase(), pool.toUpperCase() });
         availableRows.remove(new String [] {host,String.valueOf(port),env.toUpperCase(), pool.toUpperCase()});
         currentOffset.remove(new String [] {host,String.valueOf(port),env.toUpperCase(), pool.toUpperCase()});
+        getNextRetries.remove(host, String.valueOf(port), env.toUpperCase(), pool.toUpperCase());
 
 
     }

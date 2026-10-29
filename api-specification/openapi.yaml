@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Datapool service API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     Test data pools for load tests. A pool is an H2 table ENV.POOL (rid, text JSON, searchkey, locked).
 
@@ -203,6 +203,24 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/RepairResult'}
+  /api/v1/statistics:
+    get:
+      tags: [diagnostics]
+      summary: History for the statistics page (last hour)
+      description: |
+        Samples every 15 seconds (`datapool.statistics.interval-seconds`), kept in memory for 60 minutes
+        (`datapool.statistics.window-minutes`); empty after a restart. The page `/statistics.html` draws four charts from it:
+        rps (with a total line), mean response time, errors per second, remaining share of the pool, frequency of cycling, and a summary table. The answer may be cached for the sampling interval.
+      parameters:
+        - {name: minutes, in: query, schema: {type: integer, default: 60}}
+      responses:
+        '200':
+          description: Series per pool; null means no data for the point
+          headers:
+            Cache-Control: {schema: {type: string, example: max-age=15}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Statistics'}
   /metrics:
     get:
       tags: [diagnostics]
@@ -279,6 +297,24 @@ components:
         empty: {type: boolean}
         cursor: {type: integer, format: int64, nullable: true, description: Last value issued by the rid sequence}
         cursorEpoch: {type: integer, format: int64}
+    Statistics:
+      type: object
+      properties:
+        intervalSec: {type: integer}
+        windowMinutes: {type: integer}
+        timestamps: {type: array, items: {type: integer, format: int64}, description: Milliseconds since epoch}
+        pools:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              rps: {type: array, items: {type: number, nullable: true}}
+              latencyMs: {type: array, items: {type: number, nullable: true}}
+              errors: {type: array, items: {type: number, nullable: true}, description: Errors per second}
+              lockedPct: {type: array, items: {type: number, nullable: true}}
+              size: {type: array, items: {type: number, nullable: true}}
+              loops: {type: array, items: {type: number, nullable: true}, description: 'Cursor moves per second inside get-next-value (cycling)'}
+              loopFails: {type: array, items: {type: number, nullable: true}, description: 'Requests per interval whose loop used up the retry limit without finding data (harmful cycling)'}
     RepairResult:
       type: object
       properties:

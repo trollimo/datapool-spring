@@ -76,20 +76,28 @@ public final class Api {
         Diag.info("upload " + Cfg.LOCK_POOL + ": " + upload(Cfg.LOCK_POOL, Cfg.POOL_SIZE));
         Diag.info("upload " + Cfg.MIX_POOL + ": " + upload(Cfg.MIX_POOL, Cfg.MIX_SEED));
         if (preLockPct > 0) {
-            // берём все строки блокирующего пула и возвращаем обратно случайные (100-preLockPct)% — остальные остаются занятыми
-            Random rnd = new Random(42);
-            List<Long> all = new ArrayList<>();
-            for (int i = 0; i < Cfg.POOL_SIZE; i++) {
-                Resp r = next(Cfg.LOCK_POOL, true);
-                long rid = ridOf(r.body());
-                if (r.status() != 200 || rid < 0) { Diag.info("prelock stop at " + i + ": " + r); break; }
-                all.add(rid);
+            // берём все строки пула и возвращаем обратно случайные (100-preLockPct)% — остальные остаются занятыми навсегда
+            for (String pool : Cfg.PRELOCK_POOLS) {
+                pool = pool.trim();
+                if (pool.isEmpty()) continue;
+                Random rnd = new Random(42 + pool.hashCode());
+                List<Long> all = new ArrayList<>();
+                for (int i = 0; i < Cfg.POOL_SIZE; i++) {
+                    Resp r = next(pool, true);
+                    long rid = ridOf(r.body());
+                    if (r.status() != 200 || rid < 0) { Diag.info("prelock " + pool + " stop at " + i + ": " + r); break; }
+                    all.add(rid);
+                }
+                int kept = 0;
+                for (long rid : all) {
+                    if (rnd.nextInt(100) >= preLockPct) unlock(pool, rid);
+                    else {
+                        kept++;
+                        if (pool.equals(Cfg.LOCK_POOL)) Diag.hold(rid); else Diag.prelock(pool, rid);
+                    }
+                }
+                Diag.info("prelocked " + pool + ": " + kept + " of " + all.size());
             }
-            for (long rid : all) {
-                if (rnd.nextInt(100) >= preLockPct) unlock(Cfg.LOCK_POOL, rid);
-                else Diag.hold(rid);
-            }
-            Diag.info("prelocked rows: " + Diag.heldCount() + " of " + all.size());
         }
         // служебные пулы для «человеческих» и MCP-ручек: тесты p1..p5 они не трогают
         Diag.info("upload h1: " + upload("h1", 100));

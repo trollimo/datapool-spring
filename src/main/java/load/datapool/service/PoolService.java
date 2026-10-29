@@ -51,6 +51,15 @@ public class PoolService {
 
     public String nextValue(String env, String pool, boolean locked) {
         PoolNames.require(env, pool);
+        int[] retries = {0};
+        try {
+            return nextValue(env, pool, locked, retries);
+        } finally {
+            if (retries[0] > 0) exp.increaseRetries(env, pool, retries[0]);   // только на пути с промахами: горячий путь без лишней работы
+        }
+    }
+
+    private String nextValue(String env, String pool, boolean locked, int[] retries) {
         String fullPoolName = fullName(env, pool);
 
         if (!lockerService.poolExist(env, pool)) {
@@ -76,6 +85,7 @@ public class PoolService {
                 throw new PoolException(e.getMessage() + SEP + " ERROR " + env + "." + pool, "Error data access");
             }
             // строка занята или её нет (дыра в rid): сдвигаем курсор вперёд, один поток за раз
+            retries[0]++;
             if (locker.getRestartLock().tryLock()) {
                 try {
                     if (locker.cursorEpoch() == epoch && !fixSequenceState(env, pool, sq)) {
