@@ -8,7 +8,7 @@
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <gatling.version>3.9.5</gatling.version>
+        <gatling.version>3.14.3</gatling.version>
     </properties>
     <dependencies>
         <dependency>
@@ -23,7 +23,7 @@
             <plugin>
                 <groupId>io.gatling</groupId>
                 <artifactId>gatling-maven-plugin</artifactId>
-                <version>4.6.0</version>
+                <version>4.21.12</version>
                 <configuration>
                     <jvmArgs>
                         <jvmArg>-Xms512m</jvmArg>
