@@ -91,6 +91,10 @@ public final class Api {
             }
             Diag.info("prelocked rows: " + Diag.heldCount() + " of " + all.size());
         }
+        // служебные пулы для «человеческих» и MCP-ручек: тесты p1..p5 они не трогают
+        Diag.info("upload h1: " + upload("h1", 100));
+        Diag.info("upload h2: " + upload("h2", 200));
+        Diag.info("upload h5: " + upload("h5", 50));
         for (String p : Cfg.READ_POOLS) resetSeq(p);
         resetSeq(Cfg.LOCK_POOL);
         resetSeq(Cfg.MIX_POOL);

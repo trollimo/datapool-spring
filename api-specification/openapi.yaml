@@ -1,0 +1,297 @@
+openapi: 3.0.3
+info:
+  title: Datapool service API
+  version: 2.0.0
+  description: |
+    Test data pools for load tests. A pool is an H2 table ENV.POOL (rid, text JSON, searchkey, locked).
+
+    The load-test methods are `get-next-value` and `search-by-key`; the rest are for people (page `/pools.html`)
+    and AI agents (`/mcp`). There is no authentication: restrict access on the network level.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: load
+    description: Hot path of load tests
+  - name: pools
+    description: Pool maintenance, import and export
+  - name: diagnostics
+    description: State of the counters, repair
+  - name: mcp
+    description: Model Context Protocol for AI agents
+paths:
+  /api/v1/get-next-value:
+    get:
+      tags: [load]
+      summary: Next row of the pool
+      description: Reads rows in a ring. With locked=true the row is taken until unlock.
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - name: locked
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Row
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Row'}
+        '400':
+          description: Pool not found, pool is empty / all rows locked, or retry limit exceeded (counters diverge, see /api/v1/pools)
+          content:
+            text/plain:
+              schema: {type: string}
+  /api/v1/put-value:
+    post:
+      tags: [load]
+      summary: Insert one row (creates the pool when absent)
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - name: search-key
+          in: query
+          schema: {type: string, default: ''}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string, description: 'JSON object, up to 32000 characters'}
+      responses:
+        '200': {description: Inserted, content: {text/plain: {schema: {type: string}}}}
+        '400': {description: Name too long (max 16) / insert failed, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/search-by-key:
+    get:
+      tags: [load]
+      summary: Find an unlocked row by search key
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - name: search-key
+          in: query
+          required: true
+          schema: {type: string}
+        - name: locked
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Row
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KeyRow'}
+        '400': {description: Not found / already locked by another request, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/unlock:
+    post:
+      tags: [load]
+      summary: Unlock a row, rows by search key, or the whole pool
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - {name: rid, in: query, schema: {type: integer, format: int64}}
+        - {name: search-key, in: query, schema: {type: string}}
+        - {name: unlock-all, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200': {description: Unlocked, content: {text/plain: {schema: {type: string}}}}
+        '400': {description: Wrong parameters or pool not found, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/upload-csv-as-json:
+    post:
+      tags: [pools]
+      summary: Load a CSV file into a pool
+      description: First line is the header; every row becomes a JSON object of strings.
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - {name: delimiter, in: query, schema: {type: string, default: ','}}
+        - {name: override, in: query, description: Drop and recreate the pool, schema: {type: boolean, default: false}}
+        - {name: with-headers, in: query, schema: {type: boolean, default: true}}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '200': {description: Uploaded, content: {text/plain: {schema: {type: string}}}}
+        '400': {description: Empty file / wrong lines, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/download/csv:
+    get:
+      tags: [pools]
+      summary: Download a pool as CSV
+      description: |
+        With all_columns=false the file has one column per JSON field and can be loaded back with
+        upload-csv-as-json using the same delimiter. Values must not contain the delimiter or line breaks.
+        Heavy method; at most 500000 rows. Do not call under load.
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+        - {name: delimiter, in: query, schema: {type: string, default: ','}}
+        - {name: all_columns, in: query, description: 'Add rid, searchkey, locked (not for reload)', schema: {type: boolean, default: false}}
+        - {name: batch_size, in: query, schema: {type: integer, default: 0}}
+        - {name: offset, in: query, schema: {type: integer, default: 0}}
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema: {type: string, format: binary}
+  /api/v1/drop-pool:
+    delete:
+      tags: [pools]
+      summary: Delete the pool (table, sequences, metrics, cache)
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+      responses:
+        '200': {description: Deleted, content: {text/plain: {schema: {type: string}}}}
+        '400': {description: Pool not found, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/resetseq:
+    get:
+      tags: [pools]
+      summary: Read the pool from the start (cursor = 1)
+      parameters:
+        - $ref: '#/components/parameters/env'
+        - $ref: '#/components/parameters/pool'
+      responses:
+        '200': {description: Reset, content: {text/plain: {schema: {type: string}}}}
+        '400': {description: Error, content: {text/plain: {schema: {type: string}}}}
+  /api/v1/pools:
+    get:
+      tags: [diagnostics]
+      summary: All pools with counters; diverged pools first
+      description: Page with sorting, download, delete and repair buttons - `/pools.html`.
+      responses:
+        '200':
+          description: Pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/PoolState'}
+  /api/v1/pools/repair:
+    post:
+      tags: [diagnostics]
+      summary: Repair the counters of one pool
+      description: Rebuilds the cache from the DB (size = max(rid), locks from the table) and puts the cursor on the first free row. No schema changes.
+      parameters:
+        - {name: env, in: query, required: true, schema: {type: string}}
+        - {name: pool, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RepairResult'}
+  /api/v1/pools/repair-batch:
+    post:
+      tags: [diagnostics]
+      summary: Repair the counters of several pools
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: {type: string, example: LOAD.P1}
+      responses:
+        '200':
+          description: Result per pool
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RepairResult'}
+  /metrics:
+    get:
+      tags: [diagnostics]
+      summary: Prometheus metrics
+      parameters:
+        - {name: calculateUnlocks, in: query, schema: {type: boolean, default: false}}
+      responses:
+        '200': {description: Metrics, content: {text/plain: {schema: {type: string}}}}
+  /mcp:
+    post:
+      tags: [mcp]
+      summary: MCP server (Streamable HTTP, JSON-RPC 2.0)
+      description: |
+        Methods: initialize, ping, tools/list, tools/call, resources/list, resources/read.
+        Tools: about, list_pools, counters_stats, repair_pools, reset_sequence, unlock, put_value, upload_csv, download_pool_csv, drop_pool.
+        get-next-value and search-by-key are intentionally not available. Server limits: 30 tool calls per minute,
+        one heavy operation (upload, download, drop, repair) at a time. Call `about` first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/JsonRpcRequest'}
+            example: {jsonrpc: '2.0', id: 1, method: tools/call, params: {name: list_pools, arguments: {only_broken: true}}}
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema: {type: object}
+        '202': {description: Notification accepted, no body}
+    get:
+      tags: [mcp]
+      summary: Not supported (no server-initiated stream)
+      responses:
+        '405': {description: Use POST}
+components:
+  parameters:
+    env:
+      name: env
+      in: query
+      description: Schema
+      schema: {type: string, default: load}
+    pool:
+      name: pool
+      in: query
+      description: Pool name (at most 16 characters)
+      schema: {type: string, default: testpool}
+  schemas:
+    Row:
+      type: object
+      properties:
+        rid: {type: integer, format: int64}
+        values: {type: object, additionalProperties: true}
+        locked: {type: boolean}
+    KeyRow:
+      allOf:
+        - $ref: '#/components/schemas/Row'
+        - type: object
+          properties:
+            searchkey: {type: string}
+    PoolState:
+      type: object
+      properties:
+        pool: {type: string, example: LOAD.P1}
+        diverged: {type: boolean}
+        lockerSize: {type: integer}
+        dbMaxRid: {type: integer}
+        dbRows: {type: integer}
+        holes: {type: integer, description: dbMaxRid - dbRows}
+        dbLocked: {type: integer}
+        lockerLocked: {type: integer}
+        lockedOnlyInDb: {type: integer}
+        lockedOnlyInLocker: {type: integer}
+        empty: {type: boolean}
+        cursor: {type: integer, format: int64, nullable: true, description: Last value issued by the rid sequence}
+        cursorEpoch: {type: integer, format: int64}
+    RepairResult:
+      type: object
+      properties:
+        pool: {type: string}
+        ok: {type: boolean}
+        lockerSize: {type: integer}
+        cursor: {type: integer}
+        message: {type: string}
+    JsonRpcRequest:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: {type: string, enum: ['2.0']}
+        id: {}
+        method: {type: string}
+        params: {type: object}

@@ -37,7 +37,12 @@ Service for creating and utilizing test data pools via REST API.
 
 # Pools status
 
-Open http://localhost:8080/pools.html: table of all pools (diverged first), repair button per pool and bulk repair. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
+Open http://localhost:8080/pools.html: table of all pools (diverged first), icon buttons per pool (reset counter, download CSV, delete with confirmation) and bulk reset of counters. REST: `GET /api/v1/pools`, `POST /api/v1/pools/repair`, `POST /api/v1/pools/repair-batch`. See [docs](src/main/resources/static/index.html#Pools).
+
+# API specification and MCP
+
+- OpenAPI 3.0: [api-specification/openapi.yaml](api-specification/openapi.yaml)
+- MCP for AI agents: `POST http://localhost:8080/mcp` (Streamable HTTP, JSON-RPC 2.0). Add it to an agent as an HTTP MCP server; call the `about` tool first. Tools: about, list_pools, counters_stats, repair_pools, reset_sequence, unlock, put_value, upload_csv, download_pool_csv, drop_pool. Limits: `datapool.mcp.max-calls-per-minute` (30), `datapool.mcp.download.max-rows` (5000), `datapool.mcp.upload.max-chars` (1000000). `get-next-value` and `search-by-key` are not available through MCP.
 
 # Load tests
 

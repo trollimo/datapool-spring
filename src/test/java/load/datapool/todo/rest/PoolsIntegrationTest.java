@@ -1,14 +1,7 @@
 package load.datapool.todo.rest;
 
-import load.datapool.db.H2Template;
-import org.junit.Before;
+import load.datapool.AbstractSpringTest;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.*;
@@ -20,39 +13,7 @@ import static org.junit.Assert.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;LOCK_MODE=3",
-        "datapool.getNext.maxRetries=200"})
-@AutoConfigureMockMvc
-public class PoolsIntegrationTest {
-
-    @Autowired MockMvc mvc;
-    @Autowired H2Template jdbc;
-
-    private int seq = 0;
-    private String pool;
-
-    @Before
-    public void newPool() {
-        pool = "t" + System.nanoTime() % 100000000L + (seq++);
-    }
-
-    private void fill(int n) throws Exception {
-        for (int i = 0; i < n; i++) {
-            mvc.perform(post("/api/v1/put-value?env=tst&pool=" + pool).content("{\"a\":" + i + "}")).andReturn();
-        }
-    }
-
-    private MvcResult next(boolean locked) throws Exception {
-        return mvc.perform(get("/api/v1/get-next-value?env=tst&pool=" + pool + "&locked=" + locked)).andReturn();
-    }
-
-    private static int rid(String body) {
-        Matcher m = Pattern.compile("\"rid\":(\\d+)").matcher(body);
-        assertTrue(body, m.find());
-        return Integer.parseInt(m.group(1));
-    }
+public class PoolsIntegrationTest extends AbstractSpringTest {
 
     @Test
     public void holeInRidDoesNotLoopForever() throws Exception {
@@ -107,19 +68,32 @@ public class PoolsIntegrationTest {
         assertEquals(400, r.getResponse().getStatus());
     }
 
+    private com.fasterxml.jackson.databind.JsonNode myPool() throws Exception {
+        String list = mvc.perform(get("/api/v1/pools")).andReturn().getResponse().getContentAsString();
+        com.fasterxml.jackson.databind.JsonNode all = new com.fasterxml.jackson.databind.ObjectMapper().readTree(list);
+        boolean seenHealthy = false;
+        com.fasterxml.jackson.databind.JsonNode mine = null;
+        for (com.fasterxml.jackson.databind.JsonNode p : all) {
+            if (!p.get("diverged").asBoolean()) seenHealthy = true;
+            else assertFalse("diverged pools must come first: " + p, seenHealthy);
+            if (p.get("pool").asText().equals("TST." + pool.toUpperCase())) mine = p;
+        }
+        assertNotNull(mine);
+        return mine;
+    }
+
     @Test
     public void poolsListShowsDivergedFirstAndRepairFixesIt() throws Exception {
         fill(4);
         jdbc.update("update tst." + pool + " set locked = true where rid = 2"); // БД знает о блокировке, кэш — нет
-        String list = mvc.perform(get("/api/v1/pools")).andReturn().getResponse().getContentAsString();
-        assertTrue(list, list.startsWith("[{\"pool\":\"TST." + pool.toUpperCase() + "\",\"diverged\":true"));
-        assertTrue(list, list.contains("\"lockedOnlyInDb\":1"));
+        com.fasterxml.jackson.databind.JsonNode before = myPool();
+        assertTrue(before.get("diverged").asBoolean());
+        assertEquals(1, before.get("lockedOnlyInDb").asInt());
 
         mvc.perform(post("/api/v1/pools/repair-batch").contentType("application/json")
                 .content("[\"TST." + pool.toUpperCase() + "\"]")).andReturn();
 
-        list = mvc.perform(get("/api/v1/pools")).andReturn().getResponse().getContentAsString();
-        assertFalse(list, list.contains("\"diverged\":true"));
+        assertFalse(myPool().get("diverged").asBoolean());
         // после исправления занятая строка 2 больше не выдаётся
         Set<Integer> got = new HashSet<>();
         for (int i = 0; i < 3; i++) got.add(rid(next(true).getResponse().getContentAsString()));
