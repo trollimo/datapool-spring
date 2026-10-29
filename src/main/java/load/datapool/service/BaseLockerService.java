@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -17,7 +18,7 @@ public class BaseLockerService implements LockerService {
     private final Logger logger = LoggerFactory.getLogger(BaseLockerService.class);
 
     private static final List<String> systemSchemas = Arrays.asList("INFORMATION_SCHEMA", "PUBLIC");
-    private final HashMap<String, Locker> lockers = new HashMap<>();
+    private final Map<String, Locker> lockers = new ConcurrentHashMap<>();
 
     private final H2Template jdbcOperations;
     private final TableService tableService;
@@ -241,6 +242,18 @@ public class BaseLockerService implements LockerService {
         }
     }
 
+    /** Атомарно занимает строку: true только если UPDATE действительно перевёл locked false -> true. */
+    @Override
+    public boolean tryLock(String env, String pool, int rid) {
+        pool = tableService.fullName(env, pool);
+        int n = jdbcOperations.update("update " + pool + " set locked = true where rid = ? and locked = false", rid);
+        if (n == 1) {
+            Locker l = lockers.get(pool);
+            synchronized (l) { l.lock(rid); }
+        }
+        return n == 1;
+    }
+
     @Override
     public void unlock(String env, String pool, int rid) {
         pool = tableService.fullName(env, pool);
@@ -282,5 +295,26 @@ public class BaseLockerService implements LockerService {
     public int firstBiggerUnlockedId(String env, String pool, int id) {
         pool = tableService.fullName(env, pool);
         return lockers.get(pool).firstBiggerUnlockedId(id);
+    }
+
+    @Override
+    public void ensureSize(String env, String pool, int size) {
+        lockers.get(tableService.fullName(env, pool)).ensureSize(size);
+    }
+
+    @Override
+    public Map<String, Locker> allLockers() {
+        return new TreeMap<>(lockers);
+    }
+
+    @Override
+    public void reloadFromDb(String env, String pool) {
+        String full = tableService.fullName(env, pool);
+        Locker locker = lockers.get(full);
+        synchronized (locker) {
+            Integer maxRid = maxRid(full);
+            List<Integer> locked = jdbcOperations.queryForList("SELECT rid FROM " + full + " WHERE locked = true", Integer.class);
+            locker.reset(maxRid == null ? 0 : maxRid, locked);
+        }
     }
 }

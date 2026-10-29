@@ -26,6 +26,7 @@
             <li><a href="#Unlock">Разблокировка записи</a></li>
             <li><a href="#Delete">Удаление пула</a></li>
             <li><a href="#ResetSeq">Начать читать пул сначала</a></li>
+            <li><a href="#Pools">Состояние пулов и исправление счётчика</a></li>
             <li><a href="#Download">Скачать пул</a></li>
 
 
@@ -175,6 +176,17 @@
 <p>Пример использования:</p>
 <blockquote>
     <p>Запрос: <em><code>curl -X GET <a href="http://localhost:8080/api/v1/resetseq?env=load&amp;pool=demo_clients">"http://localhost:8080/api/v1/resetseq?env=load&pool=demo_clients"</a></code></em></p>
+</blockquote>
+
+<h2><a id="Pools"></a>Состояние пулов и исправление счётчика</h2>
+<p>Метод <code>GET /api/v1/pools</code> возвращает таблицу всех пулов. Первыми идут пулы, у которых счётчики в БД и в кэше приложения (локере) расходятся.</p>
+<p>Поля: <code>pool</code>, <code>diverged</code>, <code>lockerSize</code> (размер кэша), <code>dbMaxRid</code>, <code>dbRows</code>, <code>holes</code> (дыры в rid = max(rid) - число строк), <code>dbLocked</code> / <code>lockerLocked</code> (сколько строк занято в БД и в кэше), <code>lockedOnlyInDb</code> / <code>lockedOnlyInLocker</code> (расходящиеся блокировки), <code>empty</code>, <code>cursor</code> (текущее значение sequence выдачи), <code>cursorEpoch</code>.</p>
+<p>Расхождением считается: размер кэша не равен max(rid) в БД, либо множества занятых строк в БД и в кэше различаются.</p>
+<p>То же в виде страницы с сортировкой по любому столбцу: <a href="pools.html">pools.html</a>. У каждого пула есть кнопка «Исправить/сбросить счётчик», а чекбоксы позволяют исправить любое количество пулов одним действием.</p>
+<p>Исправление пересобирает кэш из БД (размер = max(rid), занятые строки берутся из таблицы) и ставит курсор sequence на первую свободную строку, тем же кодом, что используется в /resetseq. Схема БД не меняется.</p>
+<blockquote>
+    <p>Один пул: <em><code>curl -X POST "http://localhost:8080/api/v1/pools/repair?env=load&amp;pool=demo_clients"</code></em></p>
+    <p>Несколько пулов: <em><code>curl -X POST -H 'Content-Type: application/json' -d '["LOAD.P1","LOAD.P2"]' "http://localhost:8080/api/v1/pools/repair-batch"</code></em></p>
 </blockquote>
 
 <h2><a id="Download"></a>Скачивание пула обратно в CSV</h2>
