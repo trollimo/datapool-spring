@@ -35,7 +35,7 @@
  .hint{color:#667;font-size:12px}
  table{border-collapse:collapse;width:100%;font-size:13px}
  th,td{border-bottom:1px solid #e6eaef;padding:5px 10px;text-align:right}
- th{background:#f1f4f8;font-weight:600}
+ th{background:#f1f4f8;font-weight:600;border-bottom:1px dotted #99a}
  th:first-child,td:first-child{text-align:left}
  td.bad{background:#fde2e2;color:#b00020;font-weight:bold}
 </style>
@@ -166,7 +166,7 @@ function table(names){
   const lat=ws>0?ls/ws:null, fails=p.loopFails.reduce((a,b)=>a+(b||0),0);
   return `<tr><td><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${colors[n]};margin-right:6px"></i>${n}</td><td>${fmtNum(avg)}</td><td>${fmtNum(last)}</td><td>${fmtNum(mx)}</td><td>${lat===null?'—':fmtNum(lat)}</td><td class="${fails>0?'bad':''}">${fails}</td></tr>`;
  });
- box.innerHTML='<table><thead><tr><th>Пул</th><th>Средний rps</th><th>Последний rps</th><th>Максимальный rps</th><th>Время ответа, мс</th><th>Вредные циклы</th></tr></thead><tbody>'+rows.join('')+'</tbody></table>';
+ box.innerHTML='<table><thead><tr><th title="Имя пула ENV.POOL">Пул</th><th title="Среднее число запросов в секунду за окно графиков">Средний rps</th><th title="Запросов в секунду в последнем интервале (15 с)">Последний rps</th><th title="Наибольшее число запросов в секунду за окно">Максимальный rps</th><th title="Среднее время ответа (RTT на стороне сервиса) за окно, взвешенное по числу запросов">Время ответа, мс</th><th title="Сколько get-next-value исчерпали лимит попыток и не нашли данные (бесконечное зацикливание). Больше 0 — красным: кэш и БД, скорее всего, расходятся, см. страницу «Пулы»">Вредные циклы</th></tr></thead><tbody>'+rows.join('')+'</tbody></table>';
 }
 function status(){
  if(!lastFetch)return;
